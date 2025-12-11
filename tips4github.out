@@ -80,3 +80,26 @@ git push
 
 git pull
 這會把 GitHub 上的最新版本同步到你本地的資料夾。
+
+
+Perfect! Since your repo upgtools4gcc is public, your colleagues can already view and clone it — but to update, test, and maintain the scripts directly, they’ll need to either:
+
+🛠️ Option 1: You Add Them as Collaborators (Recommended for Team Projects)
+This gives them direct write access to the repo.
+
+✅ What they need to do:
+Accept your GitHub invitation (after you add them as collaborators)
+
+Clone the repo:
+
+git clone https://github.com/lh185009/upgtools4gcc.git
+cd upgtools4gcc
+Make changes, test scripts locally
+
+Commit and push:
+
+git add .
+git commit -m "修正 install.sh 的參數處理"
+git push
+🎉 Their changes will go directly into the repo!
+
