@@ -1,0 +1,2542 @@
+#!/bin/bash
+
+function fix4KB0042426()
+{
+  EXPIREDATE=`grep -i "Not After" /opt/teradata/TDput/TDput-*/puthttpd/conf/ssl.crt.put/*.crt|awk '{print $4,$5,$7}'`
+  CURRDATE=`date|awk '{print $2,$3,$6}'`
+
+  FORMAT4EXPIREDATE=$(date -d "$EXPIREDATE" +"%Y-%m-%d")
+  FORMAT4CURRDATE=$(date -d "$CURRDATE" +"%Y-%m-%d")
+  
+  if [ "$FORMAT4EXPIREDATE" \< "$FORMAT4CURRDATE" ]
+  then
+      echo ""
+      echo "Note"
+      echo "The SSL certificate of TDput is invalid and expired on $FORMAT4EXPIREDATE" 
+      echo "Press any key to rotate, renew the certificate before starting the SCA tool script for the upgrade"
+	  cd /opt/teradata/TDput/TDput-*/puthttpd/conf/
+      ./CreateKeys -s
+  	  ./CreateKeys -c
+  	  EXPIREDATE=`grep -i "Not After" /opt/teradata/TDput/TDput-*/puthttpd/conf/ssl.crt.put/*.crt|awk '{print $4,$5,$7}'`
+  	  echo "The SSL certificate of TDput is valid and will expire on $FORMAT4EXPIREDATE"
+  	  echo "Restarting TDput for the new certificate to take effect. Wait ..."
+  	  systemctl restart TDput
+  else
+      echo ""
+      echo "The SSL certificate of TDput is valid and will expire on $FORMAT4EXPIREDATE"
+	  sleep 1
+  fi
+  cd $WKDIR
+}
+
+function inputpw4dbc()
+{
+  while true
+  do 
+       read -p "Input username for running the checks (default: dbc)" DBCUSER
+	   DBCUSER=${DBCUSER:-dbc}
+       echo "Password you input will not be showed ..."
+       read -sp "Input password for user $DBCUSER (default: dbc): " DBCPW1
+	   DBCPW1=${DBCPW1:-dbc}
+	   echo ""
+	   read -sp "Input again(default: dbc): " DBCPW2
+	   DBCPW2=${DBCPW2:-dbc}
+	   echo ""
+	   if [ $DBCPW1 == $DBCPW2 ]
+	   then
+		    bteq << EOF
+			.logon dbc/$DBCUSER,$DBCPW1
+			.quit
+EOF
+            if [ $? == 0 ]
+			then
+			    DBCPWFLAG=0
+				DBA_PASS=$DBCPW1
+			    break;
+		    else
+			    echo "Input password is not valid and failed to logon dbs. Need to input the correct one again"
+			fi
+		else
+            echo "Input passwords are not matched. Need to input the password again"   
+        fi						
+  done
+}
+
+function check4KB0050728()
+{
+  REPODIR=/var/opt/teradata/postgres
+  CHPWF=`egrep "^dscuser|^postgres" /etc/passwd|grep bash|wc|awk '{print $1}'`
+  echo $CHPWF
+  if [ "$CHPWF" -ne 2 ]
+  then
+      echo "Corret the entries"
+      sed -i "/^dscuser/s/\([^:]*:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*\):.*/\1:\/bin\/bash/" /etc/passwd
+	  sed -i "/^postgres/s/\([^:]*:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*\):.*/\1:\/bin\/bash/" /etc/passwd
+   fi
+   echo "Check and validate /etc/passwd to see if users dscuser and postgres can logon this system" 
+   egrep "^dscuser|^postgres" /etc/passwd
+   echo "Correct and validate the permissions,owner,group of the direcotry $REPODIR "
+   echo ""
+   chmod 700 $REPODIR
+   chown -R postgres:postgres $REPODIR
+   ls -ld $REPODIR | tee -a check-repo-dir.out
+   echo ""
+}
+
+function ask4yesno()
+{
+  while :
+  do
+       read -rp "$1 (Y/y/N/n,the default is $2) ? " YesNo 
+	   if [ "$2" == "y" ] || [ "$2" == "Y" ]
+	   then 
+           YesNo=${YesNo:-Y}
+	   else 
+	       YesNo=${YesNo:-N}
+	   fi
+       YesNoLower=$(echo "$YesNo" | tr '[:upper:]' '[:lower:]')
+                		
+       case "$YesNoLower" in
+            [y])
+			FLAG4YESNO="y"
+       	    return
+                ;;
+            [n])
+			FLAG4YESNO="n"
+       		return
+                ;;
+            *)
+            echo ""
+  			echo "Note:"
+       		echo "Invalid input. Please input the required information and select Y/y/N/n again ..."
+  			read -p "Enter any key to continue ..."
+       		echo ""
+                ;;
+       esac				
+  done
+}
+
+function check4commonall()
+{ 
+  WKDIR=`pwd`
+  LOGDIRNAME=`hostname -f`-`date +%m%d%H%M`
+  LOGDIR=/var/opt/teradata/bkfiles/$LOGDIRNAME 
+  mkdir -p $LOGDIR
+  cd $LOGDIR
+  vmf_status | tee vmf_status.out
+  bootcheck | tee bootcheck.out
+  df -h| tee df-h.out
+  ntpq -p| tee ntpq-p.out
+  bam -s | tee bam-s-r.out
+  bam -r | tee -a bam-s-r.out
+  rpm -qa |sort > rpm-qa.out
+  cp /etc/hosts .
+  cp /etc/sudoers .
+  umask|tee umask.out
+  ethmap | tee ethmap.out
+  chk_all -f 
+  if [ -f /var/opt/teradata/gsctools/chk_all/chk_all.html ]
+  then
+      cp /var/opt/teradata/gsctools/chk_all/chk_all.html ./
+  else
+      cp /var/opt/teradata/gsctools/chk_node/data/chk_node.txt ./
+  fi
+  crontab -l | tee crontab-l.out
+  rpm -qa | egrep "tdwallet|tdrest|tdmrest" | tee tdwallet_tdrest_check.out
+  cp -p /etc/opt/teradata/dsa/*.properties ./
+  cp -p /tmp/dsainputs ./
+}
+
+function check4tdcommon()
+{ 
+  
+  WKDIR=`pwd`
+  LOGDIRNAME=`hostname -f`-`date +%m%d%H%M`
+  LOGDIR=/var/opt/teradata/bkfiles/$LOGDIRNAME 
+  mkdir -p $LOGDIR
+  cd $LOGDIR
+  psh "vmf_status" | tee vmf_status.out
+  psh "bootcheck -q" | tee bootcheck.out
+  psh "df -h" | tee df-h.out
+  psh "ntpq -p" | tee ntpq-p.out
+  psh "bam -s" | tee bam-s-r.out
+  psh "bam -r" | tee -a bam-s-r.out
+  rpm -qa |sort > rpm-qa.out
+  pcl -collect /etc/hosts ./
+  pcl -collect /etc/sudoers ./
+  psh "umask" | tee umask.out
+  psh "ethmap" | tee ethmap.out
+  chk_all -f 
+  if [ -f /var/opt/teradata/gsctools/chk_all/chk_all.html ]
+  then
+      cp /var/opt/teradata/gsctools/chk_all/chk_all.html ./
+  else
+      cp /var/opt/teradata/gsctools/chk_node/data/chk_node.txt ./
+  fi
+  psh "crontab -l" | tee crontab-l.out
+  psh 'rpm -qa | egrep "tdwallet|tdrest|tdmrest"' | tee tdwallet_tdrest_check.out
+  psh "cp -p /etc/opt/teradata/dsa/*.properties" ./
+  psh "cp -p /tmp/dsainputs ./"
+}
+
+function check4dsacommon()
+{
+  cp -p /etc/opt/teradata/dsa/*.properties ./
+  
+  if [ -e "/tmp/dsainputs" ]
+  then
+    cp /tmp/dsainputs ./
+  fi
+}
+
+function verifypwd4pg()
+{
+  PGPWD="postgres"
+
+  while true
+  do
+	PGPASSWORD=$PGPWD psql -U postgres << EOF
+EOF
+	if [ $? == 0 ]
+    then
+        break
+    else
+        echo "The default password for user postgres is not correct. Input the password ..."
+		read -rp "Input the password for user postgres (default: postgres) ? " PGPWD 
+        PGPWD=${PGPWD:-postgres}
+    fi		
+  done
+ 
+#  while true
+#  do
+    for i in bar postgres dsu#Bar!
+	do
+	PGPASSWORD=$i psql -U bar << EOF1 2>/dev/null
+EOF1
+	if [ $? == 0 ]
+    then
+	    BARPWD=$i
+        return
+    fi
+    done
+#	break
+#  done
+  
+  echo "The default password postgres/bar/dsu#Bar! for user bar were not working. Need to input the valid password..."  
+  while true
+  do     
+    read -rp "Input the password for user bar (default: postgres) ? " BARPWD 
+    BARPWD=${BARPWD:-postgres}
+    PGPASSWORD=$BARPWD psql -U bar << EOF2
+EOF2
+    if [ $? == 0 ]
+    then
+        break
+	else
+	    echo "The password $BARPWD you input was not working.Need to input and try again..."
+    fi
+  done 
+}
+
+function check4dsc()
+{
+  CURRDIR=`pwd`
+  MAJOR_VER=`rpm -qa|grep DSC |cut -c5-6`
+  MINOR_VER=`rpm -qa|grep DSC |cut -c8-9`
+  DSA_VER=$MAJOR_VER.$MINOR_VER
+  REPODIR=/var/opt/teradata/postgres 
+  
+  echo -e "teradata\n" | $JDK8_64_BINDIR/keytool -list -keystore /etc/opt/teradata/dsa/client.ts | tee keytool-list-teradata.out
+  echo -e "tdrestd\n" | $JDK8_64_BINDIR/keytool -list -keystore /etc/opt/teradata/dsa/client.ts | tee keytool-list-tdrestd.out
+  echo -e "DSARest\n" | $JDK8_64_BINDIR/keytool -list -keystore /etc/opt/teradata/dsa/client.ts | tee keytool-list-DSARest.out
+  echo -e "password\n" | $JDK8_64_BINDIR/keytool -list -keystore /etc/opt/teradata/dsa/client.ts | tee keytool-list-password.out
+  echo -e "\"iumb123\"\n" | $JDK8_64_BINDIR/keytool -list -keystore /etc/opt/teradata/dsa/client.ts | tee keytool-list-iumb123.out 
+
+   if [ -d "$REPODIR" ] 
+   then
+       PGPASSWORD=postgres psql -U postgres -c "\l+"  |tee pg_repos_size.out
+       PGPASSWORD=postgres psql -U postgres -c "\du"  |tee pg_du_output.out
+       dsc save_sets_replication_status | tee save_sets_replication_status.out
+   else
+bteq << EOF2  | tee td_repos_size_utility.out
+.set session transaction btet;
+.logon dbc/dbc,dbc
+sel sum(currentperm),sum(maxperm) from diskspace;
+help table bar.COMPARE_RUNS;
+sel force_utility,count(*) from job_definition order by 2 desc group by 1;
+.foldline
+.sidetitles
+sel DscName from sysbar.DSAConnectionsTbl;
+.logon bar,bar
+.logon barbackup,barbackup
+.quit
+EOF2
+   dsc list_jobs -B | tee list_jobs-B.out
+   fi 
+
+  dsc save_sets_replication_status | tee save_sets_replication_status.out 
+  dsc list_components -t system | tee list_components-system.out
+  grep -A2 "System Name" list_components-system.out|grep -v "System Name"|grep "Y"|grep -v "repository"|awk '{print $1}' > list_system_names.out
+  grep -A2 "System Name" list_components-system.out|grep -v "System Name"|grep "Y"|grep "repository"|awk '{print $1}' > list_repository_names.out
+  for i in `cat list_system_names.out`;do dsc export_config -t system -n $i -f system_$i.xml;done
+  for i in `cat list_repository_names.out`;do dsc export_config -t system -n $i -f repository_config_system.xml;done
+  rm list_system_names.out list_repository_names.out  
+  dsc list_components -t NETWORK_FABRIC | tee list_components-NETWORK_FABRIC.out
+  grep -A2 "Fabric Name" list_components-NETWORK_FABRIC.out|grep -v "Fabric Name"|grep "Y"|awk '{print $1}' > list_fabric_names.out
+  for i in `cat list_fabric_names.out`; do dsc export_config -n $i -t NETWORK_FABRIC -f NETWORdK_FABRIC-$i.xml ; done
+  rm list_fabric_names.out
+  dsc list_consumers | tee list_consumers.out
+  dsc list_components -t MEDIA_SERVER | tee list_components-MEDIA_SERVER.out
+  dsc list_access_module | tee ist_access_module.out
+  dsc list_components -t TARGET_GROUP | tee list_components-TARGET_GROUP.out
+  dsc list_target_group_map | tee list_target_group_map.out
+  dsc list_repository_backup_settings | tee list_repository_backup_settings.out
+  dsc list_jobs | tee list_jobs.out
+  if [ -e "/tmp/dsainputs" ]
+  then
+    cp /tmp/dsainputs
+  fi
+  
+  grep dscuser /etc/passwd|grep "bin/bash"
+  if [ $? == 1 ]
+  then
+      sed -i '/^dscuser/s#/sbin/nologin#/bin/bash#' /etc/passwd
+  fi
+   check4KB0050728
+}
+
+function check4nbu()
+{
+  bpcl -b ls -l /usr | grep openv | tee openv_dir_or_link.out
+  bpps -x |tee bpps-x.out
+  bpstsinfo -pi|grep -A5 "Data Domain Plugin"|tee bpstsinfo-pi-OST-version.out
+  cat /usr/openv/netbackup/bin/version|tee NBU_version.out
+  cat /usr/openv/pack/pack.summary|tee NBU_EEB_packs.out
+  lsscsi|tee lsscsi.out
+  lsscsi -g|tee lsscsi-g.out
+  vmglob -listall -b|tee vmglob-listall-b.out
+  cp -p /usr/openv/netbackup/bp.conf .
+  passwd -x -1 nbwebsvc | tee passwd-x-1_nbwebsvc.out
+  echo "\"passwd -x -1 nbwebsvc\" had been run for user nbwebsvc" >> passwd-x-1_nbwebsv.out
+  nbemmcmd -listhosts -verbose| tee nbemmcmd-listhosts.out
+  nbemmcmd -getemmserver | tee nbemmcmd-getemmserver.out
+  echo "# grep CLIENT_NAME /usr/openv/netbackup/bp.conf" > client_hostname_NBU_CH.out
+  grep CLIENT_NAME /usr/openv/netbackup/bp.conf | tee -a client_hostname_NBU_CH.out
+  echo "# grep -i backupAppClientName /etc/opt/teradata/dsa/clienthandler.properties" |tee -a client_hostname_NBU_CH.out
+  grep -i backupAppClientName /etc/opt/teradata/dsa/clienthandler.properties |tee -a client_hostname_NBU_CH.out
+  echo "# list out server from SERVER' /usr/openv/netbackup/bp.conf" | tee NBU_MS_list.out  
+  egrep '^SERVER' /usr/openv/netbackup/bp.conf |awk '{print $3}' | tee -a NBU_MS_list.out
+  echo "">> NBU_MS_list.out
+  echo "" >> NBU_MS_list.out
+  echo "# dsc list AXM access module ..." | tee -a NBU_MS_list.out
+  dsc list_access_module |egrep -A 999 "\-\-" |awk '{print $1}' |egrep -v AXM | tee -a  NBU_MS_list.out
+  echo "">> NBU_MS_list.out
+  echo "">> NBU_MS_list.out
+  echo " Run nbemmcmd -getemmserver"| tee -a NBU_MS_list.out
+  /usr/openv/netbackup/bin/admincmd/nbemmcmd -getemmserver | tee -a NBU_MS_list.out
+  cp /usr/openv/var/global/wsl/config/allowedlist.properties ./
+  nbdevquery -listdp | tee nbdevquery-listdp.out
+  nbdevquery -listdv -stype DataDomain | tee listdv-DataDomain.out
+  /usr/openv/db/bin/nbdb_ping | tee nbdb_ping_status.out
+  /usr/openv/netbackup/bin/admincmd/bpminlicense -verbose | tee NBU_license_list.out
+  /usr/openv/java/jre/bin/java -version | tee NBU_java_version.out
+  unzip -p /usr/openv/wmc/webserver/bin/tomcat-juli.jar META-INF/MANIFEST.MF | tee NBU_manifest_tomcat.out
+  tpconfig -dsh | tee tpconfig-dsh.out
+}
+
+function check4bar()
+{
+  ls /etc/opt/teradata/dsa/*.properties|egrep "clienthandler|dsc|commandline"
+  if [ $? == 0 ]
+  then
+      check4commonall
+      check4dsacommon
+      if [ -e /etc/opt/teradata/dsa/dsc.properties ]
+      then
+          check4dsc
+      fi
+  
+      rpm -qa|grep "^VRTS"
+      if [ $? == 0 ]
+      then
+          check4nbu
+      fi   
+      LOGFLAG="y"
+  else
+  	rpm -qa|grep "^VRTS"
+      if [ $? == 0 ]
+      then
+          check4commonall
+          check4nbu
+          LOGFLAG="y"
+      else
+          echo ""
+          echo "Note:"
+          echo "This server is not DSA or NBU node. Invalid option and go back to the menu  ..."
+          read -p "Enter any key to the menu and continue ..."
+          LOGFLAG="n"
+      fi
+  fi
+  
+  if [ $LOGFLAG == "y" ]
+  then 
+      PREPLOGFILE="$LOGDIRNAME".tgz 
+      tar czvf ../"$PREPLOGFILE" * 
+      echo ""
+      echo "Note:"
+      echo "The logs files have been archived to $PREPLOGFILE and can be found in directory /var/opt/teradata/bkfiles"	
+      cd $WKDIR
+  else
+      echo "Note:"
+      echo "The prep checks may not all be done collectly and interrupted. Logs/outputs can be found in $LOGDIR"
+      read -p "Press any key to continue ..."
+      echo ""		
+      cd $WKDIR
+  fi
+}
+
+function check4udm()
+{
+MAJOR_VER=`rpm -qa|grep DMDaemon |cut -c10-11`
+MINOR_VER=`rpm -qa|grep DMDaemon |cut -c13-14`
+DM_VER=$MAJOR_VER.$MINOR_VER
+
+export PATH=$PATH:/opt/teradata/client/$DM_VER/datamover/failover:/opt/teradata/datamover/daemon/$DM_VER
+REPODIR=/var/opt/teradata/postgres/data
+
+mkdir -p  ./properties/datamover
+mkdir -p ./properties/dsa
+mkdir -p ./properties/tdactivemq
+mkdir -p ./properties/network
+cp -p /etc/opt/teradata/datamover/* ./properties/datamover/
+cp -p /etc/opt/teradata/dsa/* ./properties/dsa/
+cp -p /etc/opt/teradata/tdactivemq/* ./properties/tdactivemq/
+cp -pr /etc/sysconfig/network/* ./properties/network
+grep -i "is.dsc.colocate.dm" /etc/opt/teradata/datamover/daemon.properties | tee is_dsc_local.out
+cp -p /etc/opt/teradata/tdactivemq/*.properties ./properties/
+TDWALLET=`rpm -qa|grep tdwallet`
+if [ $? == 0 ]
+then
+    echo "rpm -qa|grep tdwallet" > tdwallet_is_existing.out
+	echo "$TDWALLET is installed and found on DM server" | tee -a tdwallet_is_existing.out
+    echo "Need to prepare and upgrade tdwallet package accordingly and as needed in DM upgrades" | tee -a tdwallet_is_existing.out	
+fi
+
+if [ -d "$REPODIR" ]
+then
+for DB in datamover bar; do
+    echo -e "\n[ $DB ]"
+    psql -U postgres -P pager=off password=postgres -f <(cat <<EOF
+\c $DB
+select table_name,
+       pg_relation_size('"'||table_schema||'"."'||table_name||'"')/1024/1024 size_MB,
+       (xpath('/row/c/text()', query_to_xml(format('select count(*) AS c from %I.%I', table_schema, table_name), false, true,'')))[1]::text::int AS rows_n
+from information_schema.tables
+where table_schema in ('bar', 'public')
+order by table_schema, 3 desc;
+EOF
+)
+done | tee pg_dm_row_count_report.txt
+
+else
+bteq << EOF2  | tee td_repos_size.out
+.set session transaction btet;
+.logon dbc,dbc
+sel sum(currentperm),sum(maxperm) from diskspace;
+select count(*) from datamover.job_definition;
+select count(*) from datamover.job_instance  ;
+select count(*) from datamover.job_execution ;
+.logon datamover,datamover
+.logon bar,datamover
+.logon barbackup,datamover
+.quit
+EOF2
+for DB in datamover bar; do
+    echo -e "\n[ $DB ]\n"
+    bteq <<EOF3 > /tmp/bteq_row_counts.log 2>&1
+    .logon localhost:1025/dbc,dbc
+    .os rm /tmp/${DB}_row_counts.sql
+    .EXPORT DATA FILE=/tmp/${DB}_row_counts.sql
+    .SET QUIET ON ALL
+    .SET RECORDMODE OFF;
+    .SET TITLEDASHES OFF;
+    .SET FORMAT OFF;
+    .SET WIDTH 5000;
+    SELECT
+      'SELECT ' || '''' || TRIM(tablename) || '''' || ', count(*) from ' || TRIM(databasename) || '.' || TRIM(tablename) || ';'
+      FROM
+      dbc.tables
+    WHERE
+      databasename='${DB}'
+      AND tablekind='T'
+    ORDER BY 1 ASC
+    ;
+    .EXPORT RESET
+    .os rm /tmp/${DB}_row_counts.txt
+    .EXPORT DATA FILE=/tmp/${DB}_row_counts.txt;
+    .SET QUIET ON ALL
+    .SET INDICDATA OFF;
+    .SET RECORDMODE OFF;
+    .SET TITLEDASHES OFF;
+    .SET FORMAT OFF;
+    .SET WIDTH 100;
+    .RUN FILE /tmp/${DB}_row_counts.sql;
+    .EXPORT RESET
+    .logoff;
+    .quit;
+EOF3
+    (
+    echo -e "table_name rows\n----------- ----"
+    cat /tmp/${DB}_row_counts.txt | sort -rnk2
+    ) | column -t
+done | tee td_dm_row_count_report.txt
+cp /var/opt/teradata/gsctools/chk_all/chk_all.html .
+fi
+
+dmcluster status | tee dmcluster_status.out
+dm-control.sh status | tee dm-control-status.out
+datamove list_jobs | tee dm_list_jobs.out
+datamove list_agents | tee dm_list_agents.out
+datamove list_configuration | tee dm_list_configuration.out
+
+dsc list_consumers -t system | tee dsc_list_consumers-system.out
+dsc list_components -t system | tee dsc_list_components-system.out
+dsc list_components -t NETWORK_FABRIC | tee list_components-NETWORK_FABRIC.out
+for i in `grep _fabric list_components-NETWORK_FABRIC.out | awk '{print $1}'`; do dsc export_config -n $i -t NETWORK_FABRIC -f $i-export.xml; done
+dsc list_components -t MEDIA_SERVER | tee dsc_list_components-MEDIA_SERVER.out
+dsc list_components -t TARGET_GROUP | tee dsc_list_components-TARGET_GROUP.out
+dsc list_jobs | tee dsc_list_jobs.out
+dsc list_jobs -B | tee dsc_list_jobs-B.out
+grep rootLogger.level /etc/opt/teradata/datamover/*properties | tee rootLogger_level.out
+#mkdir -p $LOGDIR/job_XML_dir
+#cd $LOGDIR/job_XML_dir
+#for i in `datamove list_jobs | grep -i _SUCCESSFULLY | awk '{print $1}'|uniq`; do echo $i; echo; datamove list_job_definition -job_name $i -filename $i.xml; grep utility $i.xml ; echo; done | tee job_utility_used.out
+#grep "Job definition written to" job_utility_used.out -A1 | tee $LOGDIR/info_jobnames_utilities.out 
+}
+
+function check4merge()
+{
+  clear 
+  date
+  echo ""
+  PDNHOST=`cnscim -host`
+  echo "PDN hostname is $PDNHOST"
+  HOSTNAME=`hostname`
+  echo "Hostname of this node is $HOSTNAME"
+  
+  if [ "$HOSTNAME" != "$PDNHOST" ]
+  then
+      echo "Hostname $HOSTNAME is not matched with TD PDN hostname $PDNHOST"
+  	  echo "Note:"
+  	  echo "This script need to be run this script in PDN node ..."
+  	  echo ""
+  	  read -p "Enter any key to the main menu and continue ..."
+  	  return
+  else 
+      echo ""
+	  echo "Note:"
+      echo "Script will start to run checks and collect logs on PDN ..."  
+  fi
+ 
+  echo
+  read -p "Input username which is used for running reconfig_estimator (default: reconfig_estimator)" RECONFIG_EST_USER
+  RECONFIG_EST_USER=${RECONFIG_EST_USER:-reconfig_estimator}
+  psh 'cp -p /etc/opt/teradata/tdconfig/mapinfo.gdo /etc/opt/teradata/tdconfig/mapinfo.gdo.`date +%m%d`'
+  BTEQUSER=systemfe
+  BTEQPASSWD=service
+  
+  OUTFILE="prep_checks.out"
+  
+  echo \#\#\# > $OUTFILE
+  echo \#\#\# Version of this script precheck4merge is 20241029 >>$OUTFILE
+  echo \#\#\# >> $OUTFILE
+  echo >> $OUTFILE
+ 
+  echo -e "\n# sys_compare -g"
+  sys_compare -g
+  CFN=`date '+%Y%m%d'`
+  cp /var/opt/teradata/gsctools/sys_compare/comp_data*$CFN*.txt .
+  
+  echo -e "\n# node.check -n -c"
+  node.check -n -c
+  NFN=node.check.`date '+%m%d'`
+  cp /var/opt/teradata/gsctools/node_check/$NFN*.log .
+  
+  cp -p /etc/opt/teradata/tdconfig/vconfig.txt ./
+  pcl -collect /etc/hosts ./
+  cp -p /etc/hosts.equiv ./   
+  psh "rpm -qa|egrep -i 'accel|tkind|jazx|sepcor'" |tee sas_base.txt
+  psh "rpm -qa|grep -i clienthandler" | tee ClientHandler.txt
+  
+  echo -e "\n# psh date" > psh-date.out
+  psh date| tee -a psh-date.out
+  
+  echo -e "\n# psh vmf_status" > psh-vmf_status.out
+  psh vmf_status| tee -a psh-vmf_status.out
+
+  echo -e "\n# psh df -h" > psh-df-h.out
+  psh df -h | tee -a psh-df-h.out
+  
+  pcl -collect /etc/opt/teradata/tdconfig/startup.txt ./
+  
+  echo -e "\n# psh cksum /opt/teradata/TDput/data/AllowedCiphers" > AllowedCiphers_cksum.out
+  psh cksum /opt/teradata/TDput/data/AllowedCiphers| tee -a AllowedCiphers_cksum.out
+  
+  echo -e "\n# psh \"rpm -qa|egrep 'pme|teradata-sc'|sort\"" > teradata_pme_sctune.out
+  psh "rpm -qa|egrep 'pme|teradata-sc'|sort"| tee -a teradata_pme_sctune.out
+  
+  echo -e "\n# schmon -d | grep -i static" > schmon-d-static.out
+  schmon -d | grep -i static| tee -a schmon-d-static.out
+  
+  echo -e "\n# MPPInfo | grep chassis_id| uniq " > MPPInfo-chassis_id.out
+  MPPInfo | grep chassis_id| uniq | tee -a MPPInfo-chassis_id.out
+  
+  echo -e "\n# tvam -display -cod " > tvam-schset-cod.out
+  tvam -display -cod | tee -a tvam-schset-cod.out
+  echo "" >> tvam-schset-cod.out
+  echo -e "\n# schset -cod " >> tvam-schset-cod.out
+  schset -cod | tee -a tvam-schset-cod.out
+   
+  echo -e "\n# ibinfo -C mlx5_0 -P 1 -d netinfo allswitches" > ibinfo_netinfo_allswitches.out 
+  ibinfo -C mlx5_0 -P 1 -d netinfo allswitches | tee -a ibinfo_netinfo_allswitches.out
+  
+  echo -e "\n# ibinfo -C mlx5_1 -P 1 -d netinfo allswitches" >> ibinfo_netinfo_allswitches.out 
+  ibinfo -C mlx5_1 -P 1 -d netinfo allswitches | tee -a ibinfo_netinfo_allswitches.out
+  
+  echo -e "\n# psh \"bootcheck -q\"" > bootcheck-q.out
+  psh "bootcheck -q" |tee -a bootcheck-q.out
+  
+  echo -e "\n# bam -s" > psh-bam-s-r.out
+  psh "bam -s" | tee -a psh-bam-s-r.out
+  echo "" >> psh-bam-s-r.out
+  echo -e "\n# bam -r" | tee -a psh-bam-s-r.out
+  psh "bam -r" | tee -a psh-bam-s-r.out
+   
+  echo -e "\n# psh \"verify_pdisks\"" > verify_pdisks.out
+  psh "verify_pdisks" |tee -a verify_pdisks.out
+  
+  echo -e "\n# psh \"pdepath -i\"" > pdepath-i.out
+  psh "pdepath -i" |tee -a pdepath-i.out
+  
+  echo -e "\n# psh \"cat /etc/opt/teradata/sm3g/smainfo\"" > smainfo.out
+  psh "cat /etc/opt/teradata/sm3g/smainfo" |tee -a smainfo.out
+  
+  echo -e "\n# psh \"cat /etc/opt/teradata/bynet/netdev\"" > netdev.out
+  psh "cat /etc/opt/teradata/bynet/netdev" |tee -a netdev.out
+  
+  echo -e "\n# psh \"lsscsi | grep -i NETAPP | grep -c dev\"" > lsscsi-NETAPP.out
+  psh "lsscsi | grep NETAPP | grep -c dev" |tee -a lsscsi-NETAPP.out
+  
+  echo -e "\n# psh \"lsscsi | grep -i DotHill | grep -c dev\"" > lsscsi-DotHill.out
+  psh "lsscsi | grep DotHill | grep -c dev" |tee -a lsscsi-DotHill.out
+   
+  psh "/opt/teradata/fas/bin/fsc_node_show_session|grep Session|wc" | tee no_of_fsc_node_show_session.out
+  for i in `SMcli -d|awk '{print $1}'|grep -i damc`;do echo Array $i Volumes;echo;SMcli -n $i -c "show allvolumes summary;";echo;echo Array $i Drives;echo;SMcli -n $i -c "show alldrives summary;";echo;done|tee SMcli_allvolumes_alldrives.out
+  
+  echo -e "\n# psh \"/opt/teradata/fas/bin/fsc_node_show_session\"" > fsc_node_show_session.out
+  psh "/opt/teradata/fas/bin/fsc_node_show_session" |tee -a fsc_node_show_session.out
+  
+  echo -e "\n# psh \"/opt/teradata/fas/bin/fsc_node_show_session|grep Session|wc\"" >> fsc_node_show_session.out
+  psh "/opt/teradata/fas/bin/fsc_node_show_session|grep Session|wc" |tee -a fsc_node_show_session.out
+  
+  echo -e "\n# psh \"ls /dev/pdisk/*|wc\"" > ls-pdisk.out
+  psh "ls /dev/pdisk/*|wc" |tee -a ls-pdisk.out
+  
+  echo -e "\n# tvam -display -config" > tvam-display-config.out
+  tvam -display -config |tee -a tvam-display-config.out
+  
+  echo -e "\n# tvam -display -config -amp 0" > tvam-display-config-amp0.out
+  tvam -display -config |tee -a tvam-display-config-amp0.out
+  
+  echo -e "\n# schset -attr" > schset-attr.out
+  schset |tee -a schset-attr.out
+  
+  echo -e "\n# /usr/bin/python /opt/teradata/etcore/tvs_elastic_tcore/etcorecli/etcorecli.py --cmd=get --obj=systemtcore" > etcorecli-get.out
+  su teradata -c "/usr/bin/python /opt/teradata/etcore/tvs_elastic_tcore/etcorecli/etcorecli.py --cmd=get --obj=systemtcore" | tee -a etcorecli-get.out
+  
+  echo -e "\n# dbscontrol -a | grep -i securezone" > securezone_purchased.out
+  dbscontrol -a | grep -i securez | tee -a securezone_purchased.out
+  dbscontrol -a | grep -i securez |grep -i true
+  if [ $? == 0 ]
+  then
+  rm securezone_names.out
+bteq << EOF1
+.set session transaction btet;
+.logon dbc/$DBCUSER,$DBCPW1
+.set width 255
+.export report file=securezone_names.out
+Select zonenamei, count(*) from dbc.zones order by 1 group by 1;
+.export reset
+.export report file=JoinIndexes.out
+sel trim(databasename)||'.'||trim(tablename) from dbc.tables where tablekind = 'I';
+.export reset
+.export report file=Non-ASCII_table_names.out
+SELECT
+'SHOW TABLE ' || trim(databasename) || '.U&"' ||
+trim(REGEXP_REPLACE(char2hexint(tablename), '([0-9A-F]{4})', '#\1')) || '" UESCAPE ''#'' /* ' || trim(tablename)
+|| ' */ ;' as oustr
+FROM dbc.tablesv
+WHERE
+REGEXP_INSTR(tablename, '[^\x{00}-\x{7F}]' , 1, 1, 0, 'i') > 0
+order by 1;
+.export reset 
+.logoff
+.quit
+EOF1
+  echo "" >>Non-ASCII_table_names.out
+  echo "KB0042794–Table names with non-ASCII characters can not be moved using Viewpoint or tdmaps SPs." >>Non-ASCII_table_names.out
+  echo "Open an incident with GSO System Change to assist with generating ALTER TABLE commands." >>Non-ASCII_table_names.out 
+  fi
+
+  rm pj_check_disable_drop.out
+ 
+bteq << EOF2
+.set session transaction btet;
+.logon dbc/$DBCUSER,$DBCPW1
+.set width 255 
+.export report file=pj_check_disable_drop.out
+SELECT 'ALTER TABLE '||trim(d2.databasename)||'.'||trim(t2.tvmname)
+  ||', NO JOURNAL  /* PJ tbl = '||trim(jd.databasename)||'.'||trim(jt.tvmname)||   ' */ ;' as AltStmt
+FROM dbc.dbase jd, dbc.tvm jt, dbc.dbase d2, dbc.tvm t2
+WHERE jd.databaseid=jt.databaseid
+and t2.journalid = jt.tvmid     
+and t2.databaseid = d2.databaseid
+and jt.tablekind = 'J'
+order by 1;
+SELECT 'MODIFY '|| CASE RowType WHEN 'D' THEN 'DATABASE ' WHEN 'U' THEN 'USER ' END || trim(databasename) ||' AS DROP DEFAULT JOURNAL TABLE;' as ModifyStmt
+FROM dbc.dbase WHERE JournalId <> '00000000'xb 
+order by 1;
+.export reset
+.export report file=Incremental_Restore_Tables_List.out
+SELECT db.databasename, a.tvmname FROM dbc.BAR_Tables2V a, dbc.dbase db
+WHERE a.databaseid=db.databaseid and a.restorestate='o';
+.export reset
+echo "
+
+You can run the incremental restore job with the Allow Write option set to true
+(or) run SQL command INCREMENTAL RESTORE ALLOW WRITE FOR object name.
+
+You can disable IR state(read only state) with the command below:
+INCREMENTAL RESTORE ALLOW WRITE FOR <Databasename>;
+
+(or)
+
+INCREMENTAL RESTORE ALLOW WRITE FOR <Databasename>.<Tablename>;
+
+## Helped with SQL to get the complete list of objects in IR :
+
+SELECT db.databasename, a.tvmname FROM dbc.BAR_Tables2V a, dbc.dbase db
+
+WHERE a.databaseid=db.databaseid and a.restorestate='o';
+
+## Currently proceeding with disabling IR on reported objects.
+
+Please note, once you disable IncrementalRestore state, you need to run FULL restore so you run IR job again." >>Incremental_Restore_Tables_List.out
+.logoff
+.quit
+EOF2
+
+echo "
+
+You can run the incremental restore job with the Allow Write option set to true
+(or) run SQL command INCREMENTAL RESTORE ALLOW WRITE FOR object name.
+
+You can disable IR state(read only state) with the command below:
+INCREMENTAL RESTORE ALLOW WRITE FOR <Databasename>;
+(or)
+INCREMENTAL RESTORE ALLOW WRITE FOR <Databasename>.<Tablename>;
+
+## Helped with SQL to get the complete list of objects in IR :
+
+SELECT db.databasename, a.tvmname FROM dbc.BAR_Tables2V a, dbc.dbase db
+WHERE a.databaseid=db.databaseid and a.restorestate='o';
+
+## Currently proceeding with disabling IR on reported objects.
+Please note, once you disable IncrementalRestore state, you need to run FULL restore so you run IR job again." >>Incremental_Restore_Tables_List.out
+
+  rm bteq_permspace_info.out
+bteq << EOF3 | tee bteq_permspace_info.out
+.set session transaction btet;
+.logon dbc/$DBCUSER,$DBCPW1
+.set width 255 
+select sum(currentperm),sum(maxperm) from dbc.diskspace;
+sel top 30 databasename,cast(tablename as VARCHAR(64)),sum(currentperm) (FLOAT ,FORMAT '----,---,---,---,--9') (named Table_Size) 
+from dbc.tablesize
+group by 1,2 order by 3 desc;
+sel databasename,sum(currentperm) (FORMAT '---,---,---,---,---,--9')
+,sum(maxperm) (FORMAT '---,---,---,---,---,--9') from dbc.diskspace
+order by 3 desc group by 1
+with sum(currentperm) (FORMAT '---,---,---,---,---,--9')
+,sum(maxperm) (FORMAT '---,---,---,---,---,--9')
+having sum(currentperm) = 0;
+sel databasename (char(30)), tablename (char(30)), journalflag from dbc.tablesv where journalflag <> 'NN' and journalflag <> 'N';
+select CreateTimeStamp,DatabaseName (VARCHAR(30)), TVMName (VARCHAR(30)) from DBC.ArchiveLoggingObjsV;
+sel mapname (char(30)), count(*) from dbc.tablesv group by 1 order by 1;
+SELECT SUM(MaxSpool) FROM DBC.DiskSpace WHERE DatabaseName='TDMaps';
+select profilename from dbc.users where username = 'TDMAPS';
+select databasename, tablename from dbc.tables where requesttext like '%foreign table%' and requesttext not like '%replace view%';
+sel distinct trim(databasename)||'.'||trim(tablename) from dbc.indicesv where systemdefinedji = 'Y' order by 1;
+select databasename, tvmname from dbase, tvm
+where dbase.databaseid = tvm.databaseid and tvm.tablekind IN ('N', 'I')
+and UPPER(tvm.createtext)
+LIKE
+'%ORDER%BY%' and UPPER(tvm.createtext)
+not LIKE '%ORDER%BY%HASH%' order by 1,2;
+sel distinct trim(databasename)||'.'||trim(tablename) from dbc.indicesv where systemdefinedji = 'Y' order by 1;
+sel mapname from dbc.mapsv where parentmapname='TD_Map1';
+select mapname,mapno,mapslot from dbc.maps where mapkind='c' order by mapno;
+Select zonenamei, count(*) from dbc.zones order by 1 group by 1;
+select accessright,tablename,columnname,creatorname from dbc.allrightsv where databasename='$RECONFIG_EST_USER' and username='$RECONFIG_EST_USER';
+select CASE DT.tblkind
+WHEN 'A' THEN 'AGGREGATE UDFS =                                      ' || TRIM (DT.tcount)
+WHEN 'B' THEN 'COMBINED AGGREGATE AND ORDERED ANALYTICAL FUNCTIONS = ' || TRIM (DT.tcount)
+WHEN 'D' THEN 'JARS =                                               ' || TRIM (DT.tcount)
+WHEN 'E' THEN 'EXTERNAL STORED PROCEDURES =                          ' || TRIM (DT.tcount)
+WHEN 'F' THEN 'SCALAR UDFS =                                         ' || TRIM (DT.tcount)
+WHEN 'H' THEN 'INSTANCE CONSTRUCTOR METHODS =                        ' || TRIM (DT.tcount)
+WHEN 'J' THEN 'JOURNAL TABLES =                                      ' || TRIM (DT.tcount)
+WHEN 'L' THEN 'TABLE OPERATOR =                                      ' || TRIM (DT.tcount)
+WHEN 'O' THEN 'NO PRIMARY INDEX TABLES =                             ' || TRIM (DT.tcount)
+WHEN 'P' THEN 'STORED PROCEDURES =                                   ' || TRIM (DT.tcount)
+WHEN 'Q' THEN 'QUEUE TABLES =                                        ' || TRIM (DT.tcount)
+WHEN 'R' THEN 'TABLE FUNCTIONS =                                     ' || TRIM (DT.tcount)
+WHEN 'S' THEN 'ORDERED ANALYTICAL FUNCTIONS =                        ' || TRIM (DT.tcount)
+WHEN 'T' THEN 'TABLES =                                              ' || TRIM (DT.tcount)
+WHEN 'U' THEN 'USER DEFINED DATA TYPES =                             ' || TRIM (DT.tcount)
+WHEN 'X' THEN 'AUTHORIZATIONS =                                      ' || TRIM (DT.tcount)
+WHEN 'Y' THEN 'GLOP SETS =                                           ' || TRIM (DT.tcount)
+WHEN 'Z' THEN 'UIFS =                                               ' || TRIM (DT.tcount)
+END tcount
+FROM (SELECT  COUNT(*), TableKind
+FROM DBC.TVM WHERE TVM.TableKind <> 'C' AND TVM.TableKind <> 'G'
+AND TVM.TableKind <> 'I' AND TVM.TableKind <> 'K'
+AND TVM.TableKind <> 'M' AND TVM.TableKind <> 'N'
+AND TVM.TableKind <> 'V' AND TVM.TableKind <> 'W'
+GROUP BY 2)
+AS DT (TCount, TblKind)
+ORDER BY 1
+WITH TRIM(SUM(DT.TCount))(title 'Table Headers:  ');
+sel case when tablekind = 'O'     then 'NOPI tbls:'
+   when tablekind = 'T'     then 'PI Tbls:'
+   end (title 'Table_Types')
+   ,cast (case when tablekind = 'O'     then sum(TS.currentperm)
+          when tablekind = 'T'     then sum(TS.currentperm)
+          end as FORMAT 'ZZZ,ZZZ,ZZZ,ZZZ,ZZ9') (title 'Size')
+from dbc.tables T ,dbc.tablesize TS
+where  t.tablekind     in ('O','T')
+and T.DatabaseName=TS.DatabaseName
+and T.tablename=TS.tablename
+group by tablekind ;
+sel top 100 databasename,cast(tablename as VARCHAR(64)),sum(currentperm)(FLOAT, FORMAT'----,---,---,---,--9')(named Table_Size) from dbc.tablesize group by 1,2 order by  3 desc;
+sel a.mapno, cast(mapname as CHAR(30)), TotalNumberOfAMPs, count(*)
+from dbc.tvm a
+join dbc.maps b on a.mapno = b.mapno
+where MapKind = 'S'
+group by 1,2,3
+order by 1,2,3;
+select
+count(*)(title'# Of Tables'),
+CASE
+when currentperm = 16384 then ' Empty Tables'
+when currentperm > 16384 then ' Populated  Tables'
+END Table_Status
+from   dbc.tablesizev
+where  vproc = 0
+group by Table_Status
+order by Table_Status ;
+sel MapNameI(format 'XXXXXXXXXXXXXXXXXXXX'), MapName (format 'XXXXXXXXXXXXXXXXXXXX'), MapNo,MapKind,SystemDefined,SystemDefault from dbc.maps;
+sel databasename,sum(currentperm) (FORMAT '---,---,---,---,---,--9')
+,sum(maxperm) (FORMAT '---,---,---,---,---,--9')
+from dbc.diskspace
+order by 2 desc group by 1
+with sum(currentperm) (FORMAT '---,---,---,---,---,--9')
+,sum(maxperm) (FORMAT '---,---,---,---,---,--9')
+having sum(currentperm) > 0;
+select top 100  databasename,count(tablename) from dbc.tables group by 1 order by 2 desc;
+sel trim(databasename)||'.'||trim(tablename) , sum(currentperm), count(*) OVER() from dbc.tablesize
+group by 1 order by 2 desc
+having sum(currentperm) < 2000000000;
+.export reset
+.logoff
+.quit
+EOF3
+  
+  if [ "$FLAG4CLOUD" -eq 0 ] && [ "$FLAG4VMWARE" -eq 0 ]
+  then
+      > SMcli-d.out
+      >low_perf_high_cpu_chkec.out
+      >SMcli_allvolumes_alldrives.out
+      psh "SMcli -d" | tee SMcli-d.out
+	  
+      echo SOYUZ-5501 WI > low_perf_high_cpu_chkec.out
+      echo TITAN-5600 WI | tee -a low_perf_high_cpu_chkec.out
+      echo ARAPHO=2806 RI DISK POOL | tee -a low_perf_high_cpu_chkec.out
+      echo SANDYHAWK=5700 Hybrid | tee -a low_perf_high_cpu_chkec.out
+      echo Sub Mode ID 503 is low performance sandyhawk controller for High Cpu System | tee -a low_perf_high_cpu_chkec.out
+      echo | tee -a low_perf_high_cpu_chkec.out
+	  ### 2025/08/01 Add an output SSD_wear_info.out for SSDs in Disk Arrays
+	  for array in `SMcli -d -S | awk '/damc/ {print $1}' | sort -u`; do echo $array;SMcli -n $array -c ' show allDrives;' -S|egrep -i "Drive at Tray|Solid State Disk SAS|Average erase count|spare blocks remaining"; done | tee SSD_wear_info.out
+	  
+      for i in `grep XEON /etc/opt/teradata/tdconfig/vconfig.txt|awk '{print $2}'|uniq -w 2`
+      do
+        echo | tee -a low_perf_high_cpu_chkec.out 
+        echo \#\#\# Run SMcli to check low performance high CPU configuration from byn$i |tee -a low_perf_high_cpu_chkec.out 
+        for j in `cat /tmp/SMcli-d.byn$i| awk '{print $1}' | grep -i damc`;do echo Array $j Controller Type; ssh byn$i "SMcli -n $j -c \"show allControllers summary;\"| grep -A14 -i \"Current configuration\"| egrep \"Model name:|Board ID:|Manufacturer sub-model ID:\";echo" ;done | tee -a low_perf_high_cpu_chkec.out
+        echo | tee -a low_perf_high_cpu_chkec.out 
+      done
+	  
+      for i in `grep XEON /etc/opt/teradata/tdconfig/vconfig.txt|awk '{print $2}'|uniq -w 2`
+      do
+        echo | tee -a SMcli_allvolumes_alldrives.out 
+        echo \#\#\# Run SMcli to check the status of allvolumes from byn$i |tee -a SMcli_allvolumes_alldrives.out 
+        for j in `cat /tmp/SMcli-d.byn$i| awk '{print $1}' | grep -i damc`;do echo Array $j Controller Type; ssh byn$i "SMcli -n $j -c \"show allvolumes summary;\";echo;echo Array $j Drives;echo;SMcli -n $j -c \"show alldrives summary;\";echo" ;done | tee -a SMcli_allvolumes_alldrives.out 
+        echo | tee -a SMcli_allvolumes_alldrives.out 
+      done
+  fi
+  
+  echo \#\#\# segmapfilesize: 10000000         <<< Note this is a HEX value and in bytes, which is equal to 256MB > segmapfilesize_startup.out
+  echo \# pdeglobal seg \| grep segmapfilesize | tee -a segmapfilesize_startup.out
+  pdeglobal seg | grep segmapfilesize | tee -a segmapfilesize_startup.out
+  echo | tee -a segmapfilesize_startup.out
+  echo | tee -a segmapfilesize_startup.out
+  echo \#\#\# check if \"set segactualfilesize 2\" is in /etc/opt/teradata/tdconfig/startup.txt | tee -a segmapfilesize_startup.out
+  ls -l  /etc/opt/teradata/tdconfig/startup.txt
+  if [ $? == 0 ]
+  then
+  echo \# cat /etc/opt/teradata/tdconfig/startup.txt | tee -a segmapfilesize_startup.out
+  cat /etc/opt/teradata/tdconfig/startup.txt | tee -a segmapfilesize_startup.out
+  else
+  echo \>\>\> /etc/opt/teradata/tdconfig/startup.txt is not existing | tee -a segmapfilesize_startup.out
+  fi
+  
+  echo -e "\n# grep TD_NOSTRIPE vconfig.txt |wc" >> $OUTFILE
+  grep TD_NOSTRIPE vconfig.txt |wc >> $OUTFILE
+  
+  echo -e "\n### Verify the pdisks are the same across each clique" >> $OUTFILE
+  echo -e "\n# for i in {0..10}" >> $OUTFILE
+  echo -e "do" >> $OUTFILE
+  echo -e "grep "ALIGN" vconfig.txt | awk -v cliq=\$i '{ if(\$1==cliq) print }' | grep -c HCRI" >> $OUTFILE
+  echo -e "grep "ALIGN" vconfig.txt | awk -v cliq=\$i '{ if(\$1==cliq) print }' | grep -c SSD" >> $OUTFILE
+  echo -e "done" >> $OUTFILE
+  for i in {0..10}
+  do
+  grep "ALIGN" vconfig.txt | awk -v cliq=$i '{ if($1==cliq) print }' | grep -c HCRI >> $OUTFILE
+  grep "ALIGN" vconfig.txt | awk -v cliq=$i '{ if($1==cliq) print }' | grep -c SSD >> $OUTFILE
+  done
+  
+  echo -e "\n### Verify the pdisks are the same across each subpool"  >> $OUTFILE
+  echo -e "\n# for i in {0..10}"  >> $OUTFILE
+  echo -e "do\n"  >> $OUTFILE
+  echo -e "grep "ALIGN" vconfig.txt | awk -v subp=\$i '{ if(\$2==subp) print }' | grep -c HCRI"  >> $OUTFILE
+  echo -e "grep "ALIGN" vconfig.txt | awk -v subp=\$i '{ if(\$2==subp) print }' | grep -c SSD"  >> $OUTFILE
+  echo -e "done"  >> $OUTFILE
+  for i in {0..10}
+  do
+  grep "ALIGN" vconfig.txt | awk -v subp=$i '{ if($2==subp) print }' | grep -c HCRI  >> $OUTFILE
+  grep "ALIGN" vconfig.txt | awk -v subp=$i '{ if($2==subp) print }' | grep -c SSD  >> $OUTFILE
+  done
+  
+  echo -e "\n### Verify the AMPs across each clique"  >> $OUTFILE
+  echo -e "\n# for i in {0..10}"  >> $OUTFILE
+  echo -e "do"  >> $OUTFILE
+  echo -e "grep 28[654] vconfig.txt | grep -v ALIGN | awk -v cliq=\$i '{ if(\$1==cliq && \$3==1) print }' | wc -l"  >> $OUTFILE
+  echo -e "done"  >> $OUTFILE
+  for i in {0..10}
+  do
+  grep 28[654] vconfig.txt | grep -v ALIGN | awk -v cliq=$i '{ if($1==cliq && $3==1) print }' | wc -l  >> $OUTFILE
+  done
+  
+  echo -e "\n### Verify the AMPs across each subpool"  >> $OUTFILE
+  echo -e "\n# for i in {0..20}"  >> $OUTFILE
+  echo -e "do"  >> $OUTFILE
+  echo -e "grep 28[654] vconfig.txt | grep -v ALIGN | awk -v subp=\$i '{ if(\$8==subp && \$3==1) print }' | wc -l"  >> $OUTFILE
+  echo -e "done"  >> $OUTFILE
+  for i in {0..20}
+  do
+  grep 28[654] vconfig.txt | grep -v ALIGN | awk -v subp=$i '{ if($8==subp && $3==1) print }' | wc -l  >> $OUTFILE
+  done
+  
+  echo -e "\n### Verify the AMPs across each allocator"  >> $OUTFILE 
+  echo -e "\n# for i in {28671..28638}"  >> $OUTFILE
+  echo -e "do"  >> $OUTFILE
+  echo -e "grep 28[654] vconfig.txt | grep -v ALIGN | awk -v alloc=\$i '{ if(\$7==alloc && \$3==1) print }' | wc -l"  >> $OUTFILE
+  echo -e "done"  >> $OUTFILE
+  for i in {28671..28638}
+  do
+  grep 28[654] vconfig.txt | grep -v ALIGN | awk -v alloc=$i '{ if($7==alloc && $3==1) print }' | wc -l  >> $OUTFILE
+  done
+  
+  echo ""
+  echo "Note:"
+  echo -e "\n### Please review and collect the output files in $LOGDIR for CR...\n"  
+  echo ""
+}
+
+function scandisk_checktable()
+{
+clear
+date
+echo ""
+PDNHOST=`cnscim -host`
+echo "PDN hostname is $PDNHOST"
+HOSTNAME=`hostname`
+echo "Hostname of this node is $HOSTNAME"
+
+if [ "$HOSTNAME" != "$PDNHOST" ]
+then
+    echo "Hostname $HOSTNAME is not matched with TD PDN hostname $PDNHOST"
+	echo "Note:"
+	echo "This script must be run this script in PDN node ..."
+	echo ""
+	read -p "Enter any key to the main menu and continue ..."
+	return
+else 
+    echo ""	
+fi
+
+cnscim -s|grep ferret|grep -v grep
+if [ $? == 0 ]
+  then
+      echo ""
+  	  echo "ferret is running in CNS window..."
+  	  echo "Quit and stop ferret before running this script ..."
+  	  echo ""
+	  echo "Note:"
+	  read -p "Enter any key to continue and go back to the main menu ..."
+  	  return
+fi
+
+cnscim -s|grep checktable|grep -v grep
+if [ $? == 0 ]
+  then
+      echo ""
+  	  echo "checktable is running in CNS window..."
+  	  echo "Quit and stop checktable before running this script ..."
+  	  echo ""
+	  echo "Note:"
+	  read -p "Enter any key to continue to the main menu and continue ..."
+  	  return
+fi
+
+clear
+date
+echo ""
+echo "### Usage:"
+echo "### Please ensure logons are disabled and the system is quiescent for starting checktable check dbc and pendingop"
+echo "### You are suggested to start screen and script for log before running this script" 
+echo ""
+
+LOGDIR=/var/opt/teradata/ctsd
+if [ -d "$LOGDIR" ]
+then
+  echo "The log directory $LOGDIR is present ..."
+  echo ""
+else
+  echo "Make the log directory $LOGDIR ..."
+  echo ""
+  mkdir -p $LOGDIR
+fi  
+
+while true
+do
+    echo ==============================================================================================================
+    echo ==============================================================================================================
+    echo "                    Scandisk And Checktable Menu (VersionOfTool:20250726)"
+    echo "Options:"
+	echo "0. Disable logons and abort sessions to make DBS quiescent"
+    echo "1. Run scandisk (includes scandisk ci and scandisk on dictionary data)"
+    echo "2. Run checktable check dbc (at leve two or three)"
+    echo "3. Run checktable check all tables exclude dbc (choose \"in parallel\" or \"serial\" mode,at level one or two)"
+	echo "4. Run all options above (options 1,2,3) (Logons are disabled - The system is quiescent is needed)"
+	echo "5. Run scandisk on all data (dictionary+user data)"
+	echo "6. Run checktable check all tables at pendingop (Logons are disabled - The system is quiescent is needed)"
+	echo "7. Exit"
+    echo ==============================================================================================================
+    echo ==============================================================================================================
+	read -rp "Enter your choice (0-7,default is 7): " Choice
+	Choice=${Choice:-7}
+	case $Choice in
+	0)
+	    ask4yesno "Confirm you want to disable logons and abort all sessions in DBS" N
+	    case $FLAG4YESNO in
+	    "y")
+	        ask4yesno "Outage of DBS will be started.Confirm to start the outagge" N 
+		    if [ "$FLAG4YESNO" == "y" ]
+			then
+			    echo "disable logons" | /usr/pde/bin/cnscons
+				echo "abort session *.* logoff list" | /usr/pde/bin/cnscons
+				echo "abort session *.* logoff list" | /usr/pde/bin/cnscons
+				echo; /usr/pde/bin/pdestate -a|grep -i disabled|grep -i quiescent
+				read -p "Press any key to continue..."
+				clear
+				date
+				echo;echo
+            else
+			    clear
+				date
+                echo;echo
+			fi
+			;;
+		"n")
+		    echo;echo
+			;;
+		esac
+	    ;;
+	1|5)
+	    break
+		;;
+	2)
+	    pdestate -a|grep -i disabled|grep -i quiescent
+		if [ $? == 0 ]
+		then
+		    echo ""
+			echo "System is \"Logons are disabled - The system is quiescent\""
+			break
+	    else
+		    clear
+			date
+		    echo ""
+			echo "Note:"
+			echo "Make sure system is \"Logons are disabled - The system is quiescent\" before starting checktable check on dbc"
+			echo "Correct it and choose the option again ..."
+			read -p "Enter any key to continue ..."
+			echo ""
+		fi
+		;;
+	3|4|6)
+	    while true
+		do	     
+		     pdestate -a|grep -i disabled|grep -i quiescent
+		     if [ $? == 0 ]
+		     then
+		         echo ""
+			     echo "System is \"Logons are disabled - The system is quiescent\""
+				 if [ "$Choice" -eq 3 ] || [ "$Choice" -eq 4 ]
+				 then
+				   echo ""
+				   echo "!!!!!"
+				   echo "Important Note"
+				   echo "Enable logons when check all tables in parallel is running causes blocks because parallel may not be changed into serial mode automatically"
+                   echo "Important Note"				   
+                   echo "!!!!!"
+                   echo	""			   
+			       read -rp "Confirm you want to run check all tables in parallel mode (Y/y/N/n,the default is N) ? " YesNo
+                   YesNo=${YesNo:-N}
+                   YesNoLower=$(echo "$YesNo" | tr '[:upper:]' '[:lower:]')
+                   case "$YesNoLower" in
+                        [y])
+                          CHKTBLMODE=1
+                          SHOWMENU=1
+				  		  break
+         	 	  		  ;;
+                        [n])
+         	 	  	      CHKTBLMODE=2
+				  		  read -rp "Confirm you want to run check all tables in serial mode (Y/y/N/n,the default is Y) ? " YesNo2
+                          YesNo2=${YesNo2:-Y}
+                          YesNoLower2=$(echo "$YesNo2" | tr '[:upper:]' '[:lower:]')
+				  		  case "$YesNoLower2" in
+				  		      [y])
+							    SHOWMENU=1
+				  		        break								
+				  			    ;;
+				  		      [n])
+				  		        echo ""
+				  			    echo "Choose to run check all tables in parallel or serial mode again ..."
+								read -p "Enter any key to continue ..."
+				  		        echo ""
+                                ;;
+                                *)
+                                echo ""
+         	 	  		        echo "Invalid input. Please input and select Y/y/N/n again ..."
+								read -p "Enter any key to continue ..."
+         	 	  		        echo ""
+                                  ;;
+				  		  esac
+				  		  ;;
+                        *)
+                          echo ""
+         	 	  		  echo "Invalid input. Please input and select Y/y/N/n again ..."
+						  read -p "Enter any key to continue ..."
+         	 	  		  echo ""
+                          ;;					  
+                   esac
+				 else
+				   SHOWMENU=1
+				   break
+                 fi					
+	         else
+			     if [ "$Choice" -eq 3 ]
+				 then
+					 read -rp "Confirm you want to run check all tables in serial mode (Y/y/N/n,the default is Y) ? " YesNo2
+                     YesNo2=${YesNo2:-Y}
+                     YesNoLower2=$(echo "$YesNo2" | tr '[:upper:]' '[:lower:]')
+				  	 case "$YesNoLower2" in
+				  	 [y])
+						SHOWMENU=1
+						CHKTBLMODE=2
+					    echo ""
+					    echo "Checktable check all tables will be run in serial or concurrent mode ..."
+						read -p "Enter any key to continue ..."
+					    echo ""
+				  		break								
+				  	    ;;
+				  	 [n])
+					    SHOWMENU=0
+				  		echo ""
+				        echo "Correct it and choose the option again ..."
+						read -p "Enter any key to continue ..."
+				  		echo ""
+						break
+                        ;;
+                        *)
+                        echo ""
+         	 	  		echo "Invalid input. Please input and select Y/y/N/n again ..."
+                        read -p "Enter any key to continue ..."
+         	 	  		echo ""
+                        ;;
+				  	  esac
+				 else
+					 clear
+					 date
+					 echo ""
+			         echo "Note:"
+					 if [ "$Choice" -eq 4 ]
+					 then
+			           echo "Need to make sure system is \"Logons are disabled - The system is quiescent\" before starting checktable check dbc ..."
+					 fi
+					 if [ "$Choice" -eq 5 ]
+					 then
+			           echo "Need to make sure system is \"Logons are disabled - The system is quiescent\" before starting checktable check pendingop ..." 
+					 fi
+			         echo "Correct it and select option again ..."
+					 read -p "Enter any key to continue ..."
+			         echo ""
+					 SHOWMENU=0
+					 break
+				 fi	 
+		     fi	
+		done
+		if [ "$SHOWMENU" -eq 1 ]
+		then
+		    break
+		fi
+        ;;
+	7)
+	    break
+		;;
+	*)
+        echo ""
+        echo "Invalid input. Please input and select Y/y/N/n again ..."
+        echo ""	
+	    ;;
+	esac
+done		
+
+if [ "$Choice" -eq 4 ]
+then
+  RUNOPTION=1
+else
+  RUNOPTION=$Choice
+fi
+
+clear
+date
+while true
+do
+  case $RUNOPTION in
+  1)
+    echo ""
+    echo "Start to run scandisk ci ..."
+    bash -c "/usr/pde/bin/cnsrun  -force -utility ferret -commands '{scandisk ci} {Y} {quit}' -prompt 'Ferret.*==>|based upon this scope' -log /var/opt/teradata/ctsd/scandisk-ci-`date +%m%d%H%M`.log" &
+    sleep 3
+    SCANDISKCIPID=`ps -ef|grep "scandisk ci"|grep -v grep|awk '{print $2}'`
+    while true
+    do
+         ps -ef|grep -v grep|grep -v cnstool|grep $SCANDISKCIPID|grep -i "scandisk ci"
+         if [ $? -eq 0 ]
+         then
+  	       echo ""
+           echo "scandisk ci is running ..."
+           echo ""
+           sleep 20
+         else
+           echo ""
+           echo "scandisk ci is completed"
+           echo "Start to run scandisk table ..."
+           bash -c "/usr/pde/bin/cnsrun  -force -utility filer -commands '{scandisk table 0 0 0 to 0 1000. 0 } {Y} {quit}' -prompt 'Filer.*==>|based upon this scope' -log /var/opt/teradata/ctsd/scandisk-table-`date +%m%d%H%M`.log" &
+           sleep 3
+  	       SCANDISKTABLEPID=`ps -ef|grep "scandisk table"|grep -v grep|awk '{print $2}'`
+           break
+         fi
+    done
+      
+    while true
+    do
+      ps -ef|grep -v grep|grep -v cnstool|grep $SCANDISKTABLEPID|grep -i "scandisk table"
+      if [ $? -eq 0 ]
+      then
+	    echo ""
+        echo "scandisk table is running ..."
+        echo ""
+        sleep 20
+      else
+        echo ""
+        echo "scandisk table is completed"
+        echo ""
+    	break
+      fi
+    done
+	
+	if [ "$Choice" -eq 4 ]
+    then
+      RUNOPTION=2
+    else
+	  break
+    fi
+    ;;
+  2)
+	while true
+	do
+	     echo ""
+	     echo "Select the running level for checktable on DBC tables:"
+		 echo "1. At level two"
+		 echo "2. At level three"
+		 echo ""
+		 read -rp "Enter your choice (1-2,default is 1): " OPTION4CTDBC
+	     OPTION4CTDBC=${OPTION4CTDBC:-1}
+			 
+		 case $OPTION4CTDBC in
+		 1|2)
+		     if [ "$OPTION4CTDBC" == 1 ]
+			 then
+			     LEVEL4CTDBC="level two"
+		     else
+			     LEVEL4CTDBC="level three"
+			 fi
+		     break
+			 ;;
+		   *)
+             echo "Note:"
+             echo "Invalid input. Please input and select options 1-2 again ..."
+             echo ""
+             read -p "Press any key to the menu and continue ..."	  
+             ;;
+         esac
+    done			     		
+	echo ""  
+    echo "checktable on dbc may take a few hours if size of Access and DBQL tables in DBC is big"
+	ask4yesno "Do you want to exclue Access and DBQL tables (Y/y to exclue , N/n  not to exclud)" N
+	case $FLAG4YESNO in
+	"y")
+	    echo "The AccLogTbl,Acctg,DBQLogTbl,DBQLObjTbl,DBQLStepTbl,DBQLSqlTbl tables will be excluded in checktable has been selected"
+		echo ""		     			 
+        echo "Scope of check on dbc in CT: Partial (excluding AccLogTbl and DBQLogTbl tables)"
+        echo "Level of check on dbc in CT: $LEVEL4CTDBC"		
+		echo ""
+		read -p "Press any key to continue ..."
+		echo "Start to run checktable check on dbc ..."
+        bash -c "/usr/pde/bin/cnsrun -force -utility checktable -commands '{check dbc exclude dbc.AccLogTbl,dbc.Acctg,dbc.DBQLogTbl,dbc.DBQLObjTbl,dbc.DBQLStepTbl,dbc.DBQLSqlTbl at $LEVEL4CTDBC with no error limit skiplocks in parallel priority=R error only;} {quit;}' -prompt '.*F7 for interactive help:$' -log /var/opt/teradata/ctsd/checktable-dbc-`date +%m%d%H%M`.log" &
+        ;;
+    "n")
+        echo "AccLogTbl and DBQLogTbl tables will be included in checktable has been selected"
+		echo ""
+        echo "Scope of check on dbc in CT: Full"
+        echo "Level of check on dbc in CT: $LEVEL4CTDBC"		
+		echo ""
+		read -p "Press any key to continue ..."	
+        echo "Start to run checktable check on dbc ..."
+        bash -c "/usr/pde/bin/cnsrun -force -utility checktable -commands '{check dbc at $LEVEL4CTDBC with no error limit skiplocks in parallel priority=R error only;} {quit;}' -prompt '.*F7 for interactive help:$' -log /var/opt/teradata/ctsd/checktable-dbc-`date +%m%d%H%M`.log" &
+        ;;
+	esac
+	sleep 3
+    CHECKDBCPID=`ps -ef|grep "check dbc"|grep -v grep|awk '{print $2}'`  
+    while :
+    do
+      ps -ef|grep -v grep|grep -v cnstool|grep $CHECKDBCPID|grep -i "check dbc"
+      if [ $? -eq 0 ]
+      then    
+  	  echo ""
+        echo "checktable check DBC is running ..."
+        echo ""
+        sleep 20
+      else	
+  	  echo ""
+        echo "chektable check DBC is completed"
+  	  echo ""
+   	  break
+      fi
+    done
+	
+	if [ "$Choice" -eq 4 ]
+    then
+      RUNOPTION=3
+    else
+	  break
+    fi
+    ;;
+  3)
+	while true
+	do
+	     echo ""
+	     echo "Select the running level for checktable on all user tables:"
+		 echo "1. At level one"
+		 echo "2. At level two"
+		 echo ""
+		 read -rp "Enter your choice (1-2,default is 1): " OPTION4CTALL
+	     OPTION4CTALL=${OPTION4CTALL:-1}
+			 
+		 case $OPTION4CTALL in
+		 1|2)
+		     if [ "$OPTION4CTALL" == 1 ]
+			 then
+			     LEVEL4CTALL="level one"
+		     else
+			     LEVEL4CTALL="level two"
+			 fi
+		     break
+			 ;;
+		   *)
+             echo "Note:"
+             echo "Invalid input. Please input and select options 1-2 again ..."
+             echo ""
+             read -p "Press any key to the menu and continue ..."	  
+             ;;
+         esac
+    done  
+    
+    echo "start to run checktable check all tables ..."
+    if [ "$CHKTBLMODE" -eq 2 ]
+    then 
+      echo ""
+      echo "Start to run checktable check all tables in serial mode ..."
+      bash -c "/usr/pde/bin/cnsrun -force -utility checktable -commands '{check all tables exclude DBC at $LEVEL4CTALL skiplocks concurrent mode retry limit 2 error only;} {quit;}' -prompt '.*F7 for interactive help:$' -log /var/opt/teradata/ctsd/checktable-op-all-`date +%m%d%H%M`.log" &  
+    else
+      echo ""
+      echo "Start to run checktable check all tables in parallel mode ..."
+      bash -c "/usr/pde/bin/cnsrun -force -utility checktable -commands '{check all tables exclude DBC at $LEVEL4CTALL with no error limit skiplocks in parallel priority=R error only;} {quit;}' -prompt '.*F7 for interactive help:$' -log /var/opt/teradata/ctsd/checktable-op-all-`date +%m%d%H%M`.log" &
+    fi 
+    sleep 3	
+    CHECKALLTABLEPID=`ps -ef|grep "check all"|grep -v grep|awk '{print $2}'`   
+    while :
+    do
+      ps -ef|grep -v grep|grep -v cnstool|grep $CHECKALLTABLEPID|grep -i "check all"
+      if [ $? -eq 0 ]
+      then    
+	    echo ""
+        echo "checktable check all tables is running ..."
+        echo ""
+        sleep 20
+      else	
+	    echo ""
+        echo "checktable check all table is completed"
+        echo ""
+    	echo ""
+    	break
+      fi
+    done
+	
+	break
+    ;;
+  5)
+    echo ""
+    echo "Start to run scandisk ..."
+    bash -c "/usr/pde/bin/cnsrun  -force -utility ferret -commands '{scandisk} {Y} {quit}' -prompt 'Ferret.*==>|based upon this scope' -log /var/opt/teradata/ctsd/scandisk-all-`date +%m%d%H%M`.log"&
+    sleep 3
+	
+    SCANDISKTABLEPID=`ps -ef|grep "scandisk"|grep -v grep|awk '{print $2}'`  
+    while true
+    do
+      ps -ef|grep -v grep|grep -v cnstool|grep $SCANDISKTABLEPID|grep -i "scandisk table"
+      if [ $? -eq 0 ]
+      then
+	    echo ""
+        echo "scandisk table is running ..."
+        echo ""
+        sleep 20
+      else
+        echo ""
+        echo "scandisk table is completed"
+        echo ""
+    	break
+      fi
+    done
+	
+    break
+    ;;	
+  6)
+    echo "Start to run checktable check tables at pendingop ..."
+    bash -c "/usr/pde/bin/cnsrun -force -utility checktable -commands '{check all tables at level pendingop in parallel;} {quit;}' -prompt '.*F7 for interactive help:$' -log /var/opt/teradata/ctsd/checktable-pendingop-`date +%m%d%H%M`.log" &
+    sleep 3	
+    CHECKALLTABLEPID=`ps -ef|grep "level pendingop"|grep -v grep|awk '{print $2}'`   
+    while :
+    do
+      ps -ef|grep -v grep|grep -v cnstool|grep $CHECKALLTABLEPID|grep -i "pendingop"
+      if [ $? -eq 0 ]
+      then    
+	    echo ""
+        echo "checktable check on all tables is running ..."
+        echo ""
+        sleep 20
+      else	echo ""
+        echo "checktable check on all table is completed"
+        echo ""
+    	echo ""
+    	break
+      fi
+    done
+	
+	break
+    ;;
+   7)
+    break
+	;;
+  esac
+done 
+
+if [ "$Choice" -eq 7 ]
+then
+  echo ""
+  echo "Exit the scandisk_checktable menu ..."
+  read -p "Enter any key to the main menu and continue..."
+  echo ""
+else 
+  echo ""  
+  echo "Notes:"
+  echo "Please review and collect the required logs in $LOGDIR accordingly"
+  echo ""
+  read -p "Exit the scandisk_checktable menu. Enter any key to the main menu and continue ..."
+fi
+}
+
+function cksum4PKG()
+{
+  read -rp "Enter the directory for the software and packages (default is $WKDIR): " SWDIRNAME
+  SWDIRNAME=${SWDIRNAME:-$WKDIR} 
+  
+  cd $SWDIRNAME
+  if [ $? != 0 ]
+  then
+      echo ""
+	  echo "The directory you input is not existing"
+	  read -p "Correct it and continue.Press any key to continure ..."
+	  return
+  fi
+  
+  cd $SWDIRNAME 
+  NO4CKSUMFILE=`ls -ltr cksum*|wc|awk '{print $1}'`
+  
+  ls cksum*.txt
+  if [ $? != 0 ]
+  then
+      echo ""
+	  echo "The cksum&.txt file for validation is not existing"
+	  read -p "Correct it and continue.Press any key to continure ..."
+	  cd $WKDIR
+	  return
+  fi	  	
+
+  dos2unix cksum*.txt 
+  CKSUMERR=$WKDIR/pkg_cksum_failure.out
+  >$CKSUMERR
+  echo ""
+  echo "Start to do cksum on all packages (*.gz)"  
+  CKSUMFLAG=0
+  for i in `ls *.gz`
+  do
+    PKGCKSUM=`cksum $i`
+    PKGCKSUM1=`echo $PKGCKSUM | awk '{print $1}'`  
+	PKGCKSUM2=`echo $PKGCKSUM | awk '{print $2}'`	
+	INFOINCKSUMFILE1=$(awk -v pattern="$i" '$3 == pattern' cksum_*.txt | uniq | awk '{print $1}')
+    INFOINCKSUMFILE2=$(awk -v pattern="$i" '$3 == pattern' cksum_*.txt | uniq | awk '{print $2}')
+	
+	if [ "$PKGCKSUM1" = "$INFOINCKSUMFILE1" ] && [ "$PKGCKSUM2" = "$INFOINCKSUMFILE2" ]
+	then
+	    echo "$i             ......cksum OK"
+    else
+	    CKSUMFLAG=1
+	    if [ $INFOINCKSUMFILE1 == ""]
+		then
+		    echo "$i             ......no cksum info found in cksum txt file" | tee -a $CKSUMERR
+		else
+            tput blink
+            echo "$i             ......cksum failed" | tee -a $CKSUMERR
+            tput sgr0
+        fi
+     fi
+  done	 
+  
+  ls *.rpm 1>/dev/null 2>/dev/null
+  case $? in
+  0)
+      for i in `ls *.rpm`
+      do
+        PKGCKSUM=`cksum $i`
+        PKGCKSUM1=`echo $PKGCKSUM | awk '{print $1}'`  
+	    PKGCKSUM2=`echo $PKGCKSUM | awk '{print $2}'`
+        INFOINCKSUMFILE1=$(awk -v pattern="$i" '$3 == pattern' cksum_*.txt | uniq | awk '{print $1}')
+        INFOINCKSUMFILE2=$(awk -v pattern="$i" '$3 == pattern' cksum_*.txt | uniq | awk '{print $2}')
+	    
+	    if [ $PKGCKSUM1 == $INFOINCKSUMFILE1 ] && [ $PKGCKSUM2 == $INFOINCKSUMFILE2 ]
+	    then
+	        echo "$i   ......cksum OK"
+        else
+	        CKSUMFLAG=1
+	        if [ $INFOINCKSUMFILE1 == ""]
+	    	then
+	    	    echo "$i   ......no cksum info found in cksum txt file"	| tee -a $CKSUMERR			
+	    	else
+                tput blink
+                echo "$i   ......cksum failed" | tee -a $CKSUMERR
+                tput sgr0
+            fi
+         fi
+      done
+      ;;
+  esac	    
+  
+  if [ $CKSUMFLAG != 0 ]
+  then
+      echo ""
+      echo "Note:"
+      echo "The cksum validation reported issues on *.gz and *.rpm"
+	  cat $CKSUMERR
+	  echo ""
+      read -p "Review, correct the issues accordingly and continue.Press any key to continue ..."
+  else
+      echo ""
+      echo "The cksum validation on *.gz and/or *.rpm has been done w/o any issue"
+      read -p "Press any key to continue ..." 
+  fi
+  cd $WKDIR  
+}
+
+function check4vpcert
+{
+  if [ ! -e /etc/opt/teradata/viewpoint ]
+  then
+      echo "This is not a Viewpoint server.This check can only be run on a Viewpoint server"
+      read -p "Press any key to menu and continue ..."	  
+	  return
+  fi
+  
+  while true
+  do
+        clear
+	date
+    echo "Certificates of borker,postgres,tmsmonitor and tomcat will be checked"
+	echo "Support for rotating self-signed certficates in standalone VP only"
+	echo ""
+    echo ==========================================================================================
+    echo ==========================================================================================
+    echo "         Check and Rotate self-signed certificates in Viewpoint"
+    echo "Options:"
+    echo "1. Check the validity of certificates"
+	echo "2. Rotate self-signed certificates of tomcat,broker,postgres in VP 23.10 or higher"
+    echo "3. Rotate self-signed certificates in tomcat,broker,postgres in VP 23.04 or lower"
+	echo "4. Rotate self-signed certificate of tmsmonitor"
+	echo "5. Exit"
+    echo ==========================================================================================
+    echo ==========================================================================================
+    read -rp "Enter your choice (1-5,default is 5): " Choice4Certificate
+    Choice4Certificate=${Choice4Certificate:-5}
+	
+    case $Choice4Certificate in
+    1)  
+        echo ""
+        echo ""
+        echo "Start to check the certificates in Viewpoint ..."
+        echo ""
+        echo "Checking validity of the certificate of broker(tdactivemq)"
+        CERT4BKER=`/opt/teradata/jvm64/jdk8/bin/keytool -list -v -storepass viewpoint -keystore /etc/opt/teradata/viewpoint/certs -alias broker 2>/dev/null|grep "until:"|cut -d " " -f10,11,12,13,14,15`
+        echo "The certificate of broker will be valid until       : $CERT4BKER"
+        echo ""
+        
+        echo "Checking validity of the certificate of postgres"
+        CERT4PG=`/opt/teradata/jvm64/jdk8/bin/keytool -list -v -storepass viewpoint -keystore /etc/opt/teradata/viewpoint/certs -alias postgres 2>/dev/null|grep "until:"|cut -d " " -f10,11,12,13,14,15`
+        echo "The certificate of postgres will be valid until     : $CERT4PG"
+        echo ""
+        
+        /opt/teradata/jvm64/jdk8/bin/keytool -list -v -keystore /etc/opt/teradata/tmsmonitor/certs <<EOF >tmsmonitor.out 2>/dev/null
+viewpoint
+EOF
+        for i in `grep "Alias name" tmsmonitor.out|awk '{print $3}'`
+        do
+           echo "Checking validity of the certificate of $i"
+           CERT4TMSMON=`grep -A10 $i tmsmonitor.out|grep "until:"|cut -d " " -f10,11,12,13,14,15`
+           echo "The certificate of tmsmonitor will be valid until   : $CERT4TMSMON"
+           echo ""
+        done
+        
+        echo "Checking validity of the certificate of tomcat(https)"
+        CERT4PG=`/opt/teradata/jvm64/jdk8/bin/keytool -list -keystore /etc/opt/teradata/viewpoint/certs -alias tomcat -v -storepass viewpoint 2>/dev/null|grep "until:"|cut -d " " -f10,11,12,13,14,15`
+        echo "The certificate of tomcat(https) will be valid until: $CERT4PG"
+		
+		echo ""
+		echo "Note:"
+       	echo "Review the validity of each certificate above"
+  		read -p "Press any key to continue ..."
+        ;;
+		
+	2)
+	    CURR_VPVER=`rpm -qa|grep viewpoint-|cut -d "-" -f 2|cut -d "." -f 1,2`
+
+        if (( $(echo "$CURR_VPVER >= 23.10" | bc -l) ))
+		then
+		    echo "Note:"
+            echo "Be aware VP services will be restarted in the process of rotation"
+            read -p "Press any key to continue ..."
+			/opt/teradata/viewpoint/dcs/bin/vp-certs.sh renew
+        else
+		    CURR_VPVER_FULL=`rpm -qa|grep viewpoint`
+		    echo "Note:"
+			echo "The running version $CURR_VPVER_FULL is lower than 23.10 and this option is not valid"
+			read -p "Press any key to continue ..." 
+        fi				
+	    ;;
+	3)
+	    CURR_VPVER=`rpm -qa|grep viewpoint-|cut -d "-" -f 2|cut -d "." -f 1,2`
+
+        if (( $(echo "$CURR_VPVER >= 23.10" | bc -l) ))
+		then
+		    CURR_VPVER_FULL=`rpm -qa|grep viewpoint`
+		    echo "Note:"
+			echo "The running version $CURR_VPVER_FULL is lower than 23.10 and you should choose option 2 instead"
+			read -p "Press any key to continue ..."
+        else
+            echo "Note:"
+            echo "Be aware VP services will be restarted in the process of rotation"
+            read -p "Press any key to continue ..."
+			
+			echo ""
+			echo "Rotate Tomcat certificate ..."
+			/opt/teradata/jvm64/jdk8/bin/keytool -list -keystore /etc/opt/teradata/viewpoint/certs -alias tomcat -v -storepass viewpoint|egrep "DNSName:|IPAddress" > dnsname_ipaddress.out
+			sed -e 's/^  DNSName: /dns:/' -e 's/^  IPAddress: /ip:/' dnsname_ipaddress.out > new_dnsname_ipaddress.out
+			SAN_LIST=`tr '\n' ',' < "new_dnsname_ipaddress.out" | sed 's/,$/\n/'`
+			
+			/opt/teradata/jvm64/jdk8/bin/keytool -delete -alias tomcat -keystore "/etc/opt/teradata/viewpoint/certs" -storepass viewpoint
+			/opt/teradata/jvm64/jdk8/bin/keytool -genkeypair -noprompt -alias tomcat -keyalg RSA -keystore /etc/opt/teradata/viewpoint/certs -dname "CN=linux-ppmh.labs.teradata.com, OU=UDA, O=Teradata, L=San Diego, ST=California, C=US" -ext "BC:critical=CA:true,pathlen:0" -ext "KU:critical=digitalSignature,keyCertSign,keyEncipherment,keyAgreement" -ext "EKU:critical=serverAuth" -ext "SAN=$SAN_LIST" -validity 3650 -keysize 2048 -storepass viewpoint -keypass viewpoint
+			
+			echo ""
+			echo "Rotate tdactivemq/broker certificate ..."
+			mkdir /tmp/tdactivemq_certs_bkp
+            cp -pr /etc/opt/teradata/tdactivemq /tmp/tdactivemq_certs_bkp/
+            ls -rtl /tmp/tdactivemq_certs_bkp/
+            cd /etc/opt/teradata/tdactivemq
+            rm broker.ks certs tdactivemq.crt tdactivemq.key tdactivemq.p12
+            /opt/teradata/viewpoint/dcs/bin/vp-certs.sh install mq broker
+			
+			echo ""
+			echo "Rotate postgres certificate ..."
+			mkdir /tmp/postgres_bkp
+            cp -pr /etc/opt/teradata/postgres/ /tmp/postgres_bkp/
+            cd /etc/opt/teradata/postgres/
+            rm postgres.crt postgres.key postgresroot.crt
+            /opt/teradata/viewpoint/dcs/bin/vp-certs.sh install pg postgres
+			
+			/opt/teradata/viewpoint/bin/vp-control.sh stop
+            /etc/init.d/postgresql stop
+            /etc/init.d/postgresql start
+            /opt/teradata/viewpoint/bin/vp-control.sh start
+			
+            read -p "Press any key to continue ..."			
+        fi	
+	    ;;
+    4)
+	  echo ""
+	  echo "Rotate tmsmonitor certificate ..."
+	  mv /etc/opt/teradata/tmsmonitor/certs /etc/opt/teradata/tmsmonitor/bk-certs
+	  /opt/teradata/viewpoint/tmsmonitor/bin/tmsmonitor-cert.sh
+	  
+	  read -p "Press any key to continue ..."
+      ;;
+    5)
+	  cd $WKDIR
+      break
+      ;;
+	*)
+      echo ""
+      echo "Invalid input. Please input and select options 1-4 again ..."
+      echo ""
+      read -p "Press any key to the main menu and continue ..."	  
+      ;;		
+		
+    esac
+  done	
+}
+
+function build4dsainputs()
+{
+  echo "To generate the /tmp/dsainputs ..." 
+
+  DSCPRS=/etc/opt/teradata/dsa/dsc.properties
+  DSARESTPRS=/etc/opt/teradata/dsa/dsarest.properties
+  CHPRS=/etc/opt/teradata/dsa/clienthandler.properties
+  BARCLPRS=/etc/opt/teradata/dsa/commandline.properties
+  FLAG4DSAREST=1
+  
+  if [ -f /tmp/dsainput ]
+  then 
+      mv /tmp/dsainput /tmp/dsainputs-`date +%m%d%H%M`
+  fi
+    
+  if [ -f $BARCLPRS ]
+  then
+      CONNECTION=`grep -oP '^broker\.type=\K.*' $BARCLPRS`
+      echo "CONNECTION=$CONNECTION" >/tmp/dsainputs
+	  JAVAHOME=`grep -oP '^BARCMDLINE_JAVA_HOME=\K.*' $BARCLPRS`
+      echo "BARCMDLINE_JAVA_HOME=$JAVAHOME" >>/tmp/dsainputs	  
+  fi
+  
+  if [ -f $DSCPRS ]
+  then
+      ### 2025/07/17 Add this for DSC if BARCmdline is not installed
+      if [ ! -f $BARCLPRS ]
+      then
+          CONNECTION=`grep -oP '^broker\.type=\K.*' $DSCPRS`
+          echo "CONNECTION=$CONNECTION" >/tmp/dsainputs
+          echo "BARCMDLINE_JAVA_HOME=" >>/tmp/dsainputs		  
+      fi
+	  
+      DSCNAME=`grep -oP '^dsc\.name=\K.*' $DSCPRS`
+      echo "DSCNAME=$DSCNAME" >>/tmp/dsainputs	  
+      BURL=`grep -oP '^broker\.url=\K.*' $DSCPRS`
+      echo "BURL=$BURL" >>/tmp/dsainputs	  
+	  BPORT=`grep -oP '^broker\.port=\K.*' $DSCPRS`
+      echo "BPORT=$BPORT" >>/tmp/dsainputs	  
+      verifypwd4pg
+	  echo "POSTGRESPASSWORD=$PGPWD" >>/tmp/dsainputs
+	  echo "BARPASSWORD=$BARPWD" >>/tmp/dsainputs  
+	  DSARESTSCHEME=`grep "^dsarest.webservice.scheme" $DSARESTPRS|cut -d "=" -f 2`
+	  ### 2025/07/02 Convert and change http to https for DSA 20.00.28.00 or higher
+	  if [ "$DSARESTSCHEME" == "http" ] && (( $(echo "$DSA_NEW_MVER == 20" | bc -l) )) && (( $(echo "$DSA_NEW_TVER >= 28" | bc -l) ))
+	  then
+	      FLAG4DSAREST=0
+          echo "DSARESTSCHEME=https" >> /tmp/dsainputs
+          echo "DSARESTPORT=9090" >> /tmp/dsainputs 		  
+	      echo "KEYSTOREPASS=tdrestd" >>/tmp/dsainputs		  
+	  else
+          echo "DSARESTSCHEME=$DSARESTSCHEME" >>/tmp/dsainputs
+          DSARESTPORT=`grep "^dsarest.webservice.port" $DSARESTPRS|cut -d "=" -f 2`			  
+      	  echo "DSARESTPORT=$DSARESTPORT" >>/tmp/dsainputs  
+	      KEYSTOREPASS=`grep "dsarest.certificate.keystorepass" $DSARESTPRS|cut -d "=" -f 2`
+          echo "KEYSTOREPASS=$KEYSTOREPASS" >>/tmp/dsainputs			  
+	  fi
+	  echo "LANDINGZONE=/var/opt/teradata/dsa/postgres" >>/tmp/dsainputs	  
+	  VIEWPOINTURL=`grep "viewpoint.url" $DSCPRS|cut -d "=" -f 2`
+      echo "VIEWPOINTURL=$VIEWPOINTURL" >>/tmp/dsainputs	  
+	  VIEWPOINTPORT=`grep "viewpoint.port" $DSCPRS|cut -d "=" -f 2` 
+      echo "VIEWPOINTPORT=$VIEWPOINTPORT" >>/tmp/dsainputs	  
+	  VIEWPOINTTYPE=`grep "viewpoint.type" $DSCPRS|cut -d "=" -f 2`
+      echo "VIEWPOINTTYPE=$VIEWPOINTTYPE" >>/tmp/dsainputs	  
+	  CAMCLUSTERENABLED=`grep "cam.cluster.enabled" $DSCPRS|cut -d "=" -f 2`
+      if [ $CAMCLUSTERENABLED == "true" ]
+      then 
+           CAMCLUSTERENABLED="yes"
+      else
+           if [ $CAMCLUSTERENABLED == "false" ]
+           then 
+               CAMCLUSTERENABLED="no"
+           fi
+      fi
+      echo "CAMCLUSTERENABLED=$CAMCLUSTERENABLED" >>/tmp/dsainputs	  
+	  CAMPRIMARYURL=`grep "cam.activemq.host" $DSCPRS|cut -d "=" -f 2`
+      echo "CAMPRIMARYURL=$CAMPRIMARYURL" >>/tmp/dsainputs	  
+	  CAMPRIMARYPORT=`grep "cam.activemq.port" $DSCPRS|cut -d "=" -f 2` 
+      echo "CAMPRIMARYPORT=$CAMPRIMARYPORT" >>/tmp/dsainputs	  
+	  CAMCLUSTERURL=`grep "cam.clustered.activemq.host" $DSCPRS|cut -d "=" -f 2`
+	  echo "CAMCLUSTERURL=$CAMCLUSTERURL" >>/tmp/dsainputs
+	  CAMCLUSTERPORT=`grep "cam.clustered.activemq.port" $DSCPRS|cut -d "=" -f 2`
+	  echo "CAMCLUSTERPORT=$CAMCLUSTERPORT" >>/tmp/dsainputs		
+  else
+      if [ -f $BARCLPRS ]
+      then
+          DSCNAME=`grep -oP '^dsc\.name=\K.*' $BARCLPRS`
+          echo "DSCNAME=$DSCNAME" >>/tmp/dsainputs	  
+          BURL=`grep -oP '^broker\.url=\K.*' $BARCLPRS`
+          echo "BURL=$BURL" >>/tmp/dsainputs	  
+	      BPORT=`grep -oP '^broker\.port=\K.*' $BARCLPRS`
+          echo "BPORT=$BPORT" >>/tmp/dsainputs  
+      fi  
+  fi
+
+### 2025/07/17 Add this for MS if BARCmdline package is not installed  
+  if [ -f $CHPRS ] && [ ! -f $BARCLPRS ] && [ ! -f $DSCPRS ]
+  then
+      CONNECTION=`grep -oP '^broker\.type=\K.*' $CHPRS`
+      echo "CONNECTION=$CONNECTION" >/tmp/dsainputs
+  fi
+
+  if [ -f $CHPRS ]
+  then 
+      BROKERLIST=`grep -oP '^broker\.list=\K.*' $CHPRS`                                  
+      SERVERID=`grep -oP '^server\.id=\K.*' $CHPRS`                                      
+      MASTERHOSTNAME=`grep -oP '^Master\.hostname=\K.*' $CHPRS`                          
+      CBBFILEPATH=`grep -oP '^CBBTempFile\.path=\K.*' $CHPRS`
+      SSLENCKEYSTOREPASSWORD=`grep -oP '^ssl\.keystore\.passwordencoded=\K.*' $CHPRS`	  
+      #if [ "$MASTERHOSTNAME" == "SELF" ]                                                   
+      #then                                                                                  
+      #    MASTERHOSTNAME=$SERVERID                                                         
+      #fi                                                                                                                                                                                                                                                                           
+      echo "BROKERLIST=$BROKERLIST"                                     >> /tmp/dsainputs 
+      echo "SERVERID=$SERVERID"                                         >> /tmp/dsainputs 
+      echo "SSLTRUSTSTOREFILE=/etc/opt/teradata/dsa/client.pem"         >> /tmp/dsainputs 
+      echo "SSLKEYSTOREFILE=/etc/opt/teradata/dsa/client-keystore.pem"  >> /tmp/dsainputs 
+      echo "SSLKEYSTOREPASSWORD="                                       >> /tmp/dsainputs 
+      echo "SSLENCKEYSTOREPASSWORD=$SSLENCKEYSTOREPASSWORD"             >> /tmp/dsainputs 
+      echo "ISMASTER=no"                                                >> /tmp/dsainputs 
+      echo "MASTERHOSTNAME=$MASTERHOSTNAME"                             >> /tmp/dsainputs 
+      echo "CBBFILEPATH=$CBBFILEPATH"                                   >> /tmp/dsainputs  
+      echo "SERVERPORT=15401"                                           >> /tmp/dsainputs 
+	  
+      chmod 2755 $CBBFILEPATH                                                              
+      chown dscuser:users $CBBFILEPATH                                                     
+  fi
+  BACKUPAPPCLIENTNAME=`grep -i "^server.backupAppClientName" $CHPRS|cut -d "=" -f 2`
+  echo "BACKUPAPPCLIENTNAME=$BACKUPAPPCLIENTNAME"                       >> /tmp/dsainputs            
+}
+
+function function4SWcheck()
+{
+  case $1 in
+  "DIR4SW")
+      for i in "${LIST4PKGS[@]}"; do
+      PKGNAME=`ls $i 2>/dev/null`  
+      if [ $? == 0 ]
+      then
+          echo "OK.....$PKGNAME is found"
+      else
+          echo "NG.....$i is not found"
+          all_exist=false
+      fi
+      done
+      ;;
+  esac
+}
+
+function function4CHKplugin()
+{
+  CMICIMAGE_FILE="cmicimage-16.*.cif"
+  SYSTEMTABLE_FILE="systemtable.dat"
+  
+  if [ ! -r ${CMICIMAGE_FILE} ]
+  then
+  	  echo "Error: Missing cmic image file: ${CMICIMAGE_FILE}"
+  	  return 1
+  fi
+  if [ ! -r ${SYSTEMTABLE_FILE} ]
+  then
+  	  echo "Error: Missing systemtable file: ${SYSTEMTABLE_FILE}"
+  	  return 1
+  fi
+  
+  ACTIVE_PLUGINS=( `systabutil -F${SYSTEMTABLE_FILE} -E -x | cut -f4 -d',' | sort -u | tr '\n' ' '` )
+  SUPPORTED_PLUGINS=( `unzip -p ${CMICIMAGE_FILE} config.ini | grep ^Plugin_ | cut -f2 -d'=' | tr '\n' ' '` )
+  #echo "ACTIVE_PLUGINS=${ACTIVE_PLUGINS[*]}"
+  #echo "SUPPORTED_PLUGINS=${SUPPORTED_PLUGINS[*]}"
+  OK=true
+  for PLUGIN in "${ACTIVE_PLUGINS[@]}"
+  do
+  	MATCH=false
+  	for SPLUGIN in "${SUPPORTED_PLUGINS[@]}"
+  	do
+  		if [ "$PLUGIN" = "$SPLUGIN" ]; then
+  			MATCH=true
+  			break
+  		fi
+  	done
+  	if [ "$MATCH" = "false" ]; then
+  		echo "NG.....Unsupported plugin: $PLUGIN"
+  		OK=false
+  	fi
+  done
+  if [ "$OK" != "true" ]; then
+  	return 1
+  fi
+  return 0
+}
+
+function menu4prepcheck()
+{
+  while true
+  do
+    clear
+	LOGFLAG="n"
+	date
+    echo "Note:"
+    echo "The requirements for options #2 (KB0013447),"
+	echo " -The script should be run from NBU master or DSC node"
+	echo " -/opt/teradata/gsctools/bin/bpcl_dsa.ini is present (bpcl -a -g)"
+	echo " -Add entries to bpcl.ini if any is missed accordingly"
+	echo " -Passwordless(bartrust -a) logon to all entries in bpcl.ini" 
+	echo " -Config passwordless logon (scp authorized_keys,known_hosts) for nodes added manually and test"
+	echo " -Script will ask if \"bpcl -a -g\" and \"bartrust\" to be run when bpcl.ini is not present"
+	echo ""
+    echo ============================================================================
+    echo ============================================================================
+    echo "               CR Prep/Post Check (VersionOfTool:20250726)"
+    echo "Options:"
+    echo "1. NBU/DSA standalone check w/o using bpcl and bpcl.ini"
+	echo "2. Big NBU/DSA configuration check w/ command bpcl and file bpcl.ini"
+	echo "3. Generate /tmp/dsainputs only"
+    echo "4. Unity DATAMOVER check"
+    echo "5. TD system expansion/merge check"
+	echo "6. SLES15SP2/SP6 OSmove prep checks"
+	echo "7. Run scandisk and checktable on TD PDN node"
+	echo "8. Check the validity of and rotate the self-signed certificates in VP"
+	echo "9. Validate the pakages with cksum"
+	echo "10. Backup configuration files and outputs before fresh OS installations"
+    echo "11. Check unsupported plugins before CMIC16 upgrade in On-Prem systems"
+    echo "12. Status checks before/after relocation/reboot/power-cycle"	
+	echo "13. Exit"
+    echo ===========================================================================
+    echo =========================================================================== 
+    read -rp "Enter your choice (1-13,default is 13): " Choice4Main
+    Choice4Main=${Choice4Main:-13}
+	
+    case $Choice4Main in
+    1)
+	  ls /etc/opt/teradata/dsa/*.properties|egrep "clienthandler|dsc|commandline"
+      if [ $? == 0 ]
+      then
+          check4commonall
+		  check4dsacommon
+		  
+		  if [ -e /etc/opt/teradata/dsa/dsc.properties ]
+          then
+		      check4dsc
+		  fi
+
+		  rpm -qa|grep "^VRTS"
+		  if [ $? == 0 ]
+          then
+		      check4nbu
+		  fi
+		  
+		  LOGFLAG="y"
+      else
+	      rpm -qa|grep "^VRTS"
+		  if [ $? == 0 ]
+          then
+		      check4commonall
+		      check4nbu
+              LOGFLAG="y"
+		  else
+              echo ""
+              echo "Note:"
+              echo "This server is not DSA or NBU node. Invalid option and go back to the menu  ..."
+              read -p "Enter any key to the menu and continue ..."
+              LOGFLAG="n"
+		  fi
+      fi	  
+	  ;;
+	2)
+	  WKDIR=`pwd`
+	  echo "" > function4bigbar
+	  cat <<EOF1 > function4bigbar
+	  #!/bin/bash
+	  
+	  $(declare -f check4commonall)
+	  
+	  $(declare -f check4dsacommon)
+	  
+	  $(declare -f check4dsc)
+	  
+	  $(declare -f check4nbu)
+	  
+	  $(declare -f check4bar)
+	  
+	  ### Main (script starts from here)
+      check4bar
+      PREPLOGFILE="\$LOGDIRNAME".tgz 
+      tar czvf ../"\$PREPLOGFILE" *
+      echo ""
+      echo "Note:"
+      echo "The logs files have been archived to $PREPLOGFILE and can be found in directory /var/opt/teradata/bkfiles"
+EOF1
+	  
+	  while true
+      do
+        if [ -e /opt/teradata/gsctools/bin/bpcl.ini ]
+        then
+            if [ `head -1 /opt/teradata/gsctools/bin/bpcl.ini` == `hostname -f` ]
+            then
+			    echo ""
+			    while true
+			    do
+			         cat /opt/teradata/gsctools/bin/bpcl.ini
+			         echo "Review the output of bpcl.ini output and confirm if there are all good"
+			  	     echo "If not,edit and modify it in another session and befoe pressing any key"
+                     read -p "Press any key to start the passwordless checks. You may be prompted for answering yes/no and input the password"
+			  	     echo "A \"for\" loop will be used to run command \"date\" on all nodes in bpcl.ini and for validation"
+			  	     for i in `cat /opt/teradata/gsctools/bin/bpcl.ini`
+			  	     do
+			  	        ssh $i date
+			  	     done
+			  	     read -p "Review the output above.Ensure passwordless logon has been enabled correctly and press any key to continue ..."
+                     break
+                done
+				
+                bpcl -f -s "mkdir -p $WKDIR"		
+                for i in `cat /opt/teradata/gsctools/bin/bpcl.ini`
+       	        do
+       		      scp function4bigbar $i:$WKDIR
+       		    done
+            else
+       	        echo ""
+                echo "The first entry in /opt/teradata/gsctools/bin/bpcl.ini does not match with \"hostname -f\""
+                echo "Need to make sure this is a NBU master or DSC server"		
+       		    read -p "Address the issues and select the option to run again. Press any key to continue ..."
+				LOGFLAG="n"
+      		    break
+            fi		
+        else
+            if [ -e /etc/opt/teradata/dsa/dsc.properties ]
+       	    then
+			    echo "The file bpcl.ini is not existing"
+				read -p "Command bartrust and bpcl will be run to generate bpcl.ini file.Press any key to run ..."
+       	        bartrust -a
+       	        bpcl -a -g
+       		    if [ $? == 0 ]
+       		    then
+				    echo "# cat /opt/teradata/gsctools/bin/bpcl.ini"
+                    cat /opt/teradata/gsctools/bin/bpcl.ini					
+       		        echo "The file /opt/teradata/gsctools/bin/bpcl.ini has been generated successfully"
+					echo "Edit and add entries to bpcl.ini if any is missed.Then config passwordless logon for those entries"
+       		        read -p "Press any key to the menu and select the option to run again.Press any key to continue ..."
+       	        else
+       		        echo "The file /opt/teradata/gsctools/bin/bpcl.ini has not been generated successfully"
+       		        read -p "Address the issues and select the option to run again.Press any key to continue ..."
+       	        fi
+				LOGFLAG="n"
+      		    break
+       	    else
+       	        echo ""
+                echo "Need to make sure this is a NBU master or DSC server"
+       		    read -p "Address the issues and run again. Press any key to continue ..."
+				LOGFLAG="n"
+      		    break
+       	    fi
+        fi
+		
+        for i in `cat /opt/teradata/gsctools/bin/bpcl.ini`
+       	do
+		  ssh $i "nohup bash $WKDIR/function4bigbar 1>/dev/null 2>$WKDIR/err-`hostname -f`-`date +%m%d%H%M`& exit"
+       	done
+		
+	    echo "The prephecks for BAR are running on all the nodes.Be patient and wait ..."
+		while true
+		do 
+		  bpcl -f -s "ps -ef|grep -v grep|grep function4bigbar"|grep -v Running > $WKDIR/checkstatus4process.out
+		  grep function4bigbar $WKDIR/checkstatus4process.out|grep -v grep 1>/dev/null 2>/dev/null
+		  if [ $? == 0 ]
+		  then 
+		      echo -n "."
+			  sleep 2
+		  else
+		      echo ""
+		      echo "The prepchecks on all nodes have been done"
+			  break
+		  fi
+		done
+
+        for i in `cat /opt/teradata/gsctools/bin/bpcl.ini`
+        do
+           scp $i:`ssh $i "ls -ltr /var/opt/teradata/bkfiles/$i-*.tgz|tail -1|cut -d \" \" -f9"` $WKDIR
+        done
+      done 	  
+	  ;;  
+	3)
+	  grep "^dscuser" /etc/passwd|grep "/bin/bash"
+      if [ "$?" != "0" ]
+      then
+          usermod -s /bin/bash dscuser
+      fi
+
+      grep "^postgres" /etc/passwd|grep "/bin/bash"
+      if [ "$?" != "0" ]
+      then
+          usermod -s /bin/bash postgres 2>>/dev/null
+      fi
+
+      build4dsainputs
+      sleep 1
+      clear
+      cat /tmp/dsainputs
+      echo ""
+      echo "Note:"
+      echo "The /tmp/dsainputs has been generated and showed above"
+      read -p "Review and correct /tmp/dsainputs if needed.Press any key to continue..." 
+	  ;;
+	4)
+      if [ -d /etc/opt/teradata/datamover ]
+	  then 
+	      check4commonall
+		  check4udm
+		  LOGFLAG="y"
+	  else
+          echo ""
+	      echo "Note:"
+	      echo "This server should not be a DATA MOVER. Invalid option and go back to the menu ..."
+	      read -p "Enter any key to the menu and continue ..."
+		  LOGFLAG="n"
+      fi		
+	  ;;	  
+    5)
+	  if [ -d /etc/opt/teradata/tdconfig ]
+	  then
+	  	  inputpw4dbc
+          check4tdcommon
+	      check4merge
+		  LOGFLAG="y"
+	  else
+          echo ""
+	      echo "Note:"
+	      echo "This server should not be a TD node. Invalid option and go back to the menu ..."
+	      read -p "Enter any key to the menu and continue ..."
+          LOGFLAG="n" 
+	  fi
+      ;;
+    6)
+      while true
+      do
+        clear
+	    date
+        echo "Note:"
+        echo "Choose the option base on the template you will use for your CR"
+		echo "VMS should use LS2756_VMS_SLES15_MOVEOP but no ls2756_prep_check exists"
+	    echo ""
+        echo ========================================================================
+        echo ========================================================================
+        echo "          SLES15SP2 OSmove prep check options "
+        echo "Options:"
+        echo "1. LS2750_TMS_SLES15_MOVEOP (VP,DM,,CTMS,VMS...)"
+	    echo "2. LS2752_DSA_BAR_SLES15_MOVEOP"
+        echo "3. LS2754_SWS_SLES15_MOVEOP "
+	    echo "4. Exit"
+        echo ========================================================================
+        echo ======================================================================== 
+        read -rp "Enter your choice (1-4,default is 4): " Choice4Template
+        Choice4Template=${Choice4Template:-4}
+	
+	    case $Choice4Template in
+        1)
+		  /usr/bin/ls2750_prep_check
+		  ;;
+		2)
+		  /usr/bin/ls2752_prep_check
+		  ;;
+		3)
+		  /usr/bin/ls2754_prep_check
+		  ;;
+		4)
+		  cd $WKDIR
+		  break
+		  ;;
+		*)
+         echo ""
+         echo "Invalid input. Please input and select options 1-4 again ..."
+         echo ""
+         read -p "Press any key to the main menu and continue ..."	  
+         ;;
+        esac
+	  done
+	  ;;
+    7)
+	  scandisk_checktable
+	  echo ""
+	  echo "Note:"
+	  echo "The outputs of running scandisk and checktable can be found in /var/opt/teradata/ctsd ..."
+	  echo "Press any key to continue ..."
+      ;;
+	8)
+	  check4vpcert
+	  ;;
+	9)
+	  cksum4PKG
+	  ;;
+    10)
+      FILEPSH="/usr/pde/bin/psh"
+      ISTDFLAG=0
+      if [ -f "$FILEPSH" ]; then
+		 echo ""
+         echo "Note:"
+         echo "This is a TD system. The same activities/changes will be done on all TD node."
+         ISTDFLAG=1
+      fi
+	  
+	  case $ISTDFLAG in
+	  0)
+           HOSTNM=`hostname -s`
+		   if [ -z "$HOSTNM" ]
+		   then
+		       HOSTNM=`cat /etc/HOSTNAME`
+			   if [ -z "$HOSTNM" ]
+			   then 
+			       HOSTNM=localhost
+			   fi
+		   fi
+		   TMPDIR=/tmp
+           OUTPUTDIR=$TMPDIR/$HOSTNM
+		   TIMESP=`date +%m%d%H%M`
+           TZFILE=$TMPDIR/${HOSTNM}-backup.tgz
+           
+           # CREATE TEMP DIRECTORY
+           mkdir -p $OUTPUTDIR
+           
+           # COPY SOME KNOWN FILES
+           cp --parent -rp /etc/passwd $OUTPUTDIR
+           cp --parent -rp /etc/shadow $OUTPUTDIR
+           cp --parent -rp /etc/ssh/ssh_config $OUTPUTDIR
+           cp --parent -rp /etc/ssh/sshd_config $OUTPUTDIR
+           cp --parent -rp /etc/opt/teradata/sm3g/smainfo $OUTPUTDIR
+           cp --parent -rp /etc/opt/teradata/bynet/netdev $OUTPUTDIR
+           cp --parent -rp /etc/hosts $OUTPUTDIR
+           cp --parent -rp /etc/sysconfig/network/* $OUTPUTDIR
+           cp --parent -rp /etc/resolv.conf $OUTPUTDIR
+           cp --parent -rp /etc/HOSTNAME $OUTPUTDIR
+           cp --parent -rp /etc/fstab $OUTPUTDIR
+           cp --parent -rp /etc/ntp.conf $OUTPUTDIR
+           cp --parent -rp /etc/ntp.keys $OUTPUTDIR
+           cp --parent -rp /etc/sysconfig/clock $OUTPUTDIR
+           cp --parent -rp /root/.ssh/* $OUTPUTDIR
+           cp --parent -rp /etc/login.defs $OUTPUTDIR
+           cp --parent -rp /etc/motd $OUTPUTDIR
+           cp --parent -rp /etc/sudoers $OUTPUTDIR
+           cp --parent -rp /etc/sudoers.d $OUTPUTDIR
+           cp --parent -rp /etc/modprobe.conf.local $OUTPUTDIR
+           cp --parent -rp /etc/profile.local $OUTPUTDIR
+           cp --parent -rp /etc/teradata_keytab $OUTPUTDIR
+           cp --parent -rp /opt/teradata/tdat/tdgss/site $OUTPUTDIR
+           cp --parent -rp /etc/sendmail.cf $OUTPUTDIR				   
+           cp --parent -rp /etc/init.d/boot.local $OUTPUTDIR
+           cp --parent -rp /etc/init.d/halt.local $OUTPUTDIR
+           cp --parent -rp /var/spool/cron $OUTPUTDIR
+           cp --parent -rp /etc/postfix/main.cf $OUTPUTDIR
+           cp --parent -rp /etc/modprobe.d $OUTPUTDIR
+           cp --parent -rp /etc/fstab $OUTPUTDIR
+           cp --parent -rp /var/opt/SM/emw*.bin $OUTPUTDIR
+           
+           # SAVE SOME COMMANDS' OUTPUT
+           hostname -f >$OUTPUTDIR/hostname-f.out
+           df -h|tee $OUTPUTDIR/df-h.out
+           chkconfig > $OUTPUTDIR/chkconfig.out
+           ibinfo -d local_status > $OUTPUTDIR/ibinfo.out
+           bam -s > $OUTPUTDIR/bam.out
+           ifconfig > $OUTPUTDIR/ifconfig.out
+           netecho > $OUTPUTDIR/netecho.out
+           lsscsi > $OUTPUTDIR/lsscsi.out
+           omreport storage pdisk controller=0 > $OUTPUTDIR/omreport_pdisk.out
+           omreport storage vdisk controller=0 > $OUTPUTDIR/omreport_vdisk.out
+           
+           # CREATE A TAR BALL
+           tar czfvP $TZFILE $OUTPUTDIR
+		   cp $TZFILE ./
+           rm -r $OUTPUTDIR           		   
+		   ;;
+      1)	       
+           for host in `netecho`
+           do
+           ssh $host <<'ENDSSH'
+                   HOSTNM=`hostname -s`
+                   TMPDIR=/tmp
+		           TIMESP=`date +%m%d%H%M`
+                   OUTPUTDIR=$TMPDIR/$HOSTNM
+                   TZFILE=$TMPDIR/${HOSTNM}-backup.tgz
+           
+                   # CREATE TEMP DIRECTORY
+                   mkdir -p $OUTPUTDIR
+           
+                   # COPY SOME KNOWN FILES
+                   cp --parent -rp /etc/passwd $OUTPUTDIR
+                   cp --parent -rp /etc/shadow $OUTPUTDIR
+                   cp --parent -rp /etc/ssh/ssh_config $OUTPUTDIR
+                   cp --parent -rp /etc/ssh/sshd_config $OUTPUTDIR
+                   cp --parent -rp /etc/opt/teradata/sm3g/smainfo $OUTPUTDIR
+                   cp --parent -rp /etc/opt/teradata/bynet/netdev $OUTPUTDIR
+                   cp --parent -rp /etc/hosts $OUTPUTDIR
+                   cp --parent -rp /etc/sysconfig/network/* $OUTPUTDIR
+                   cp --parent -rp /etc/resolv.conf $OUTPUTDIR
+                   cp --parent -rp /etc/HOSTNAME $OUTPUTDIR
+                   cp --parent -rp /etc/fstab $OUTPUTDIR
+                   cp --parent -rp /etc/ntp.conf $OUTPUTDIR
+                   cp --parent -rp /etc/ntp.keys $OUTPUTDIR
+                   cp --parent -rp /etc/sysconfig/clock $OUTPUTDIR
+                   cp --parent -rp /root/.ssh/* $OUTPUTDIR
+                   cp --parent -rp /etc/login.defs $OUTPUTDIR
+                   cp --parent -rp /etc/motd $OUTPUTDIR
+                   cp --parent -rp /etc/sudoers $OUTPUTDIR
+                   cp --parent -rp /etc/sudoers.d $OUTPUTDIR
+                   cp --parent -rp /etc/modprobe.conf.local $OUTPUTDIR
+                   cp --parent -rp /etc/profile.local $OUTPUTDIR
+                   cp --parent -rp /etc/teradata_keytab $OUTPUTDIR
+                   cp --parent -rp /opt/teradata/tdat/tdgss/site $OUTPUTDIR
+                   cp --parent -rp /etc/sendmail.cf $OUTPUTDIR				   
+                   cp --parent -rp /etc/init.d/boot.local $OUTPUTDIR
+                   cp --parent -rp /etc/init.d/halt.local $OUTPUTDIR
+                   cp --parent -rp /var/spool/cron $OUTPUTDIR
+                   cp --parent -rp /etc/postfix/main.cf $OUTPUTDIR
+                   cp --parent -rp /etc/modprobe.d $OUTPUTDIR
+                   cp --parent -rp /etc/fstab $OUTPUTDIR
+                   cp --parent -rp /var/opt/SM/emw*.bin $OUTPUTDIR
+           
+                   # SAVE SOME COMMANDS' OUTPUT
+                   hostname -f >$OUTPUTDIR/hostname-f.out
+                   df -h|tee $OUTPUTDIR/df-h.out
+                   chkconfig > $OUTPUTDIR/chkconfig.out
+                   ibinfo -d local_status > $OUTPUTDIR/ibinfo.out
+                   bam -s > $OUTPUTDIR/bam.out
+                   ifconfig > $OUTPUTDIR/ifconfig.out
+                   netecho > $OUTPUTDIR/netecho.out
+                   lsscsi > $OUTPUTDIR/lsscsi.out
+                   omreport storage pdisk controller=0 > $OUTPUTDIR/omreport_pdisk.out
+                   omreport storage vdisk controller=0 > $OUTPUTDIR/omreport_vdisk.out
+           
+                   # CREATE A TAR BALL
+                   tar czfvP $TZFILE $OUTPUTDIR
+           
+                   # REMOVE WORKING DIRECTORY
+                   rm -r $OUTPUTDIR
+ENDSSH
+           scp -p $host:/tmp/*-backup.tgz .
+           done          			  
+		   ;;            		 
+	  esac
+	  
+	  echo "Note:"
+      echo "The logs files have been archived to *-backup.tgz and can be found in directory `pwd`"
+      read -p "Press any key to continue ..."
+      echo ""		
+      cd $WKDIR
+      ;;
+	11)
+      while true
+      do
+        echo ""
+        read -rp "Enter the directory for CMIC16 *.cif image (default is $WKDIR): " CMICDIR 
+        CMICDIR=${CMICDIR:-$WKDIR} 
+        
+        cd $CMICDIR 
+        if [ $? != 0 ]
+        then
+            echo ""
+            echo "The directory you input is not existing"
+            read -p "Make sure and input the directory again.Press any key to continure ..."
+        else
+            cd $WKDIR
+            break
+        fi
+      done
+      
+	  cp /datapart/cmic/data/systemtable.dat $CMICDIR
+      cd $CMICDIR
+      LIST4PKGS=("cmicimage-16.00*.cif" \
+                 "systemtable.dat")
+      all_exist=true
+	  function4SWcheck DIR4SW
+	  case $all_exist in 
+	  "true")
+	         echo
+			 echo "Start to check and compare plugin information in cif image and systemtable..."
+			 echo
+	         function4CHKplugin
+	         if [ $? == 0 ]
+	         then 
+	             echo 
+	 	         echo "Note:"
+	 	         echo "No unsupported plugins is found"
+				 read -p "Press any key to continue..."
+	         else
+	             echo
+	 	         echo "Warning:"
+	 	         echo "Unsupported plugin(s) is/are found and listed above."
+	 	         echo "If you elect to upgrade to CMIC16, the healthcheck will fail with an error \"Invalid MEPlugin\""
+	 	         echo "To fix the error we will need to remove the indicated plugin and then re-run the healthcheck for each"
+	 	         read -p "Press any key to continue..."
+	         fi
+			 ;;
+	  "false")
+	         echo
+			 echo "Warning:"
+			 echo "The required file(s) (cmicimage-16.00*.cif or/and systemtable.dat) is/are not found" 
+			 read -p "Ensure the required files are ready before starting this check agin.Press any key to continue..."
+			 ;;
+	  esac
+	  cd $WKDIR
+	  ;;
+    12)
+	  bash $WKDIR/function4CHKrelocation
+	  cd $WKDIR
+	  ;;
+    13)
+	  cd $WKDIR
+      break
+      ;;
+	*)
+      echo ""
+      echo "Invalid input. Please input and select options 1-13 again ..."
+      echo ""
+      read -p "Press any key to the main menu and continue ..."	  
+      ;;
+    esac
+	
+	case $Choice4Main in
+	1|3|4|5)
+	  if [ $LOGFLAG == "y" ]
+	  then
+	      PREPLOGFILE="$LOGDIRNAME".tgz 
+	      tar czvf ../"$PREPLOGFILE" * 
+          echo ""
+          echo "Note:"
+          echo "The logs files have been archived to $PREPLOGFILE and can be found in directory /var/opt/teradata/bkfiles"
+          read -p "Press any key to continue ..."
+          echo ""		
+          cd $WKDIR
+	  fi
+	  ;;
+	2)
+	  if [ $LOGFLAG == "y" ]
+	  then
+	      echo ""
+	      date
+	      echo "Prep checks outputs *.tgz of all nodes have been transfered and can be found in $WKDIR"
+          read -p "Press any key to continue ..."
+	  fi
+	  ;;
+    esac	  
+  done	
+}
+
+### Main Procedure (start from here)
+
+LOG_DIR=/var/opt/teradata/bkfiles/gcctools_logs
+mkdir -p /var/opt/teradata/bkfiles/gcctools_logs 2>/dev/null
+LOG_FILE=$LOG_DIR/function4prepcheck-`date "+%m%d%H%M%S"`.log
+
+# Redirect both stdout and stderr to the log file
+exec > >(tee -a $LOG_FILE) 2>&1
+
+WKDIR=`pwd`
+OSREL=`osrel`
+if [ "$OSREL" == "SLES15SP6" ] && [ -e /etc/systemd/system/TDput.service ]
+then
+    rm /etc/systemd/system/TDput.service
+    systemctl daemon-reload
+fi
+
+MACHINETYPE=`machinetype`
+if echo "$MACHINETYPE" | grep -Eq "AMAZON|AZURE|GOOGLE"
+then
+    FLAG4CLOUD=1
+else
+    FLAG4CLOUD=0
+fi
+
+if echo "$MACHINETYPE" | grep -Eq "VMware"
+then
+    FLAG4VMWARE=1
+else
+    FLAG4VMWARE=0
+fi
+
+fix4KB0042426
+menu4prepcheck
