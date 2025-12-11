@@ -1041,7 +1041,7 @@ while true
 do
     echo ==============================================================================================================
     echo ==============================================================================================================
-    echo "                    Scandisk And Checktable Menu (VersionOfTool:20250726)"
+    echo "                    Scandisk And Checktable Menu (VersionOfTool:20251211)"
     echo "Options:"
 	echo "0. Disable logons and abort sessions to make DBS quiescent"
     echo "1. Run scandisk (includes scandisk ci and scandisk on dictionary data)"
@@ -1973,7 +1973,7 @@ function menu4prepcheck()
 	echo ""
     echo ============================================================================
     echo ============================================================================
-    echo "               CR Prep/Post Check (VersionOfTool:20250726)"
+    echo "               CR Prep/Post Check (VersionOfTool:20251211)"
     echo "Options:"
     echo "1. NBU/DSA standalone check w/o using bpcl and bpcl.ini"
 	echo "2. Big NBU/DSA configuration check w/ command bpcl and file bpcl.ini"

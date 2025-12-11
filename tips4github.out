@@ -1,0 +1,82 @@
+
+https://github.com/lh185009/upgtools4gcc
+
+打開 Git Bash（安裝 Git 時會附帶），輸入以下指令：
+git clone https://github.com/你的帳號名稱/bash-scripts.git
+cd bash-scripts
+
+新增並編輯 bash script
+echo '#!/bin/bash
+echo "Hello from GitHub!"' > hello.sh
+chmod +x hello.sh
+
+測試你的 script
+./hello.sh
+
+提交並推送到 GitHub
+git add hello.sh
+git commit -m "新增 hello.sh 測試腳本"
+git push origin main
+
+持續維護與版本控制
+git add .
+git commit -m "說明你做了什麼修改"
+git push
+
+如果你想進一步學習如何使用分支（branch）來測試新功能、或是如何與他人協作，我也可以一步步帶你玩～🌈 
+要不要我幫你設計一個 .gitignore 或 README.md 來讓你的專案更完整呢？
+
+把你的本地資料夾變成 Git 專案，並連接 GitHub
+cd "/c/Users/lh185009/Documents/upgtools4gcc"
+git init
+git remote add origin https://github.com/lh185009/upgtools4gcc.git
+💡 git init 是讓這個資料夾變成 Git 專案 💡 remote add origin 是告訴 Git 這個專案對應到哪個 GitHub 儲存庫
+
+上傳你的腳本到 GitHub
+git add .
+git commit -m "上傳初版 bash scripts"
+git branch -M main
+
+先拉取遠端的更新並合併 (建立 repo 時勾選了「Add a README」)
+git pull --rebase origin main
+
+
+第一次 push 時加上 -u 是為了讓 Git 記住你要推送到哪個遠端分支
+
+從 GitHub 下載最新版本（同步到本地）
+如果你已經 clone 過這個 repo：
+只要進入資料夾後執行：
+git pull
+如果你還沒 clone 過：
+可以這樣做：
+
+bash
+git clone https://github.com/你的帳號/bash-scripts.git
+這會建立一個新的資料夾，裡面就是 GitHub 上的內容
+
+小提醒：每次更新流程
+修改或新增檔案
+測試腳本
+提交並推送
+
+git add .
+git commit -m "說明你做了什麼修改"
+git push
+從 GitHub 拉最新版本（如果你在別台電腦也有作業）
+
+
+git pull
+
+提交更新到 GitHub
+每次修改完並測試沒問題後，就可以提交並推送：
+
+
+git add .
+git commit -m "修正參數處理邏輯，新增日誌輸出功能"
+git push
+這樣 GitHub 上的版本就會更新啦！
+
+🔄 4. 從 GitHub 拉最新版本（例如換電腦或與他人協作時）
+
+git pull
+這會把 GitHub 上的最新版本同步到你本地的資料夾。

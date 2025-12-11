@@ -144,8 +144,8 @@ FNAME4EST=${NO4CR}_$(date +%m%d%H%M).out
 echo;echo;echo "The followings are the required inputs for the spreadsheet of time estimation..."
 echo "(Version of script 20251211)" | tee -a $FNAME4EST
 printf "%-25s %-10s %-10s\n" "CR#                 :  " "$NO4CR" "" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "Act_Total           :  " "$TIME4CR" "" | tee -a $FNAME4EST 
-printf "%-25s %-10s %-10s\n" "Avg_throughput      :  " "$(echo "scale=2; $Uncompressed_Size / $TIME4CR"|bc)" "" | tee -a $FNAME4EST
+printf "%-25s %-10s %-10s\n" "Act_Total           :  " "$TIME4CR" "Hours" | tee -a $FNAME4EST 
+printf "%-25s %-10s %-10s\n" "Avg_throughput      :  " "$(echo "scale=2; $Uncompressed_Size / $TIME4CR"|bc)" "TB/Hour" | tee -a $FNAME4EST
 printf "%-25s %-10s %-10s\n" "Platform_type       :  " "$Platform_Type" "" | tee -a $FNAME4EST
 printf "%-25s %-10s %-10s\n" "Node#_cur           :  " "$(grep "current configuration has" rec-est-op-org|awk '{print $5}')" "Nodes" | tee -a $FNAME4EST
 printf "%-25s %-10s %-10s\n" "AMP#_cur            :  " "$(grep "current configuration has" rec-est-op-org|awk '{print $8}')" "AMPs" | tee -a $FNAME4EST
