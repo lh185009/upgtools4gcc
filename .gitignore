@@ -2,5 +2,4 @@
 *.tmp
 *.bak
 *.swp
-*.out
 .DS_Store

@@ -1,105 +1,78 @@
 
 https://github.com/lh185009/upgtools4gcc
 
-打開 Git Bash（安裝 Git 時會附帶），輸入以下指令：
-git clone https://github.com/你的帳號名稱/bash-scripts.git
-cd bash-scripts
-
-新增並編輯 bash script
-echo '#!/bin/bash
-echo "Hello from GitHub!"' > hello.sh
-chmod +x hello.sh
-
-測試你的 script
-./hello.sh
-
-提交並推送到 GitHub
-git add hello.sh
-git commit -m "新增 hello.sh 測試腳本"
-git push origin main
-
-持續維護與版本控制
-git add .
-git commit -m "說明你做了什麼修改"
-git push
-
-如果你想進一步學習如何使用分支（branch）來測試新功能、或是如何與他人協作，我也可以一步步帶你玩～🌈 
-要不要我幫你設計一個 .gitignore 或 README.md 來讓你的專案更完整呢？
-
-把你的本地資料夾變成 Git 專案，並連接 GitHub
-cd "/c/Users/lh185009/Documents/upgtools4gcc"
-git init
-git remote add origin https://github.com/lh185009/upgtools4gcc.git
-💡 git init 是讓這個資料夾變成 Git 專案 💡 remote add origin 是告訴 Git 這個專案對應到哪個 GitHub 儲存庫
-
-上傳你的腳本到 GitHub
-git add .
-git commit -m "上傳初版 bash scripts"
-git branch -M main
-
-先拉取遠端的更新並合併 (建立 repo 時勾選了「Add a README」)
-git pull --rebase origin main
+1.Change the local directory and make this directory for Git Hub.
+$ cd "/c/Users/lh185009/Documents/upgtools4gcc"
+$ git init     (initialize this directory for Git Hub)    
+$ git remote add origin https://github.com/lh185009/upgtools4gcc.git    (let Git know which GitHub repository to be used)
 
 
-第一次 push 時加上 -u 是為了讓 Git 記住你要推送到哪個遠端分支
+2.How to push the new versions of scripts to GitHub ?
+$ git add .
+$ git commit -m "explain the updates and changes in the new version"
+$ git push  (adm "-u" in the first time)
 
-從 GitHub 下載最新版本（同步到本地）
-如果你已經 clone 過這個 repo：
-只要進入資料夾後執行：
-git pull
-如果你還沒 clone 過：
-可以這樣做：
-
-bash
-git clone https://github.com/你的帳號/bash-scripts.git
-這會建立一個新的資料夾，裡面就是 GitHub 上的內容
-
-小提醒：每次更新流程
-修改或新增檔案
-測試腳本
-提交並推送
-
-git add .
-git commit -m "說明你做了什麼修改"
-git push
-從 GitHub 拉最新版本（如果你在別台電腦也有作業）
+if 「Add a README」 was selected in the creation of repository or any other time.
+$ git pull --rebase origin main        (pull the README.md from the repository)
+$ git branch -M main
 
 
-git pull
+3.How to clone or download the files and directories from repository in GitHub ?
+If clone was done before:
+$ git pull
+If not:
+$ git clone https://github.com/lh185009/upgtools4gcc
 
-提交更新到 GitHub
-每次修改完並測試沒問題後，就可以提交並推送：
+4.
+See How Many Versions (Commits) Exist
+$ git log --oneline
+
+$ git ls-tree -r --name-only HEAD | awk '
+{
+  split($0, parts, "/");
+  path = "";
+  for (i = 1; i <= length(parts); i++) {
+    path = (i == 1) ? parts[i] : path "/" parts[i];
+    if (!seen[path]) {
+      indent = "";
+      for (j = 1; j < i; j++) indent = indent "│   ";
+      prefix = (i == length(parts)) ? "├── " : "";
+      print indent prefix parts[i];
+      seen[path] = 1;
+    }
+  }
+}'
+├── .gitignore
+├── CHG0239574_12111200.out
+├── README.md
+├── estimator.txt
+readme
+│   ├── cksum of upgtool4gcc 20250912.txt
+│   ├── readme_upgtool4gcc.txt
+scripts
+│   ├── function4MHMchk
+│   ├── function4prepcheck
+├── tips4github.out
 
 
-git add .
-git commit -m "修正參數處理邏輯，新增日誌輸出功能"
-git push
-這樣 GitHub 上的版本就會更新啦！
+$ git ls-files
+.gitignore
+CHG0239574_12111200.out
+README.md
+estimator.txt
+readme/cksum of upgtool4gcc 20250912.txt
+readme/readme_upgtool4gcc.txt
+scripts/function4MHMchk
+scripts/function4prepcheck
+tips4github.out
 
-🔄 4. 從 GitHub 拉最新版本（例如換電腦或與他人協作時）
+$ git log --oneline
+96ae325 (HEAD -> main) Add readme/ and scripts/ folders with contents
+b7972a1 (origin/main) Move the scripts to the scripts directory,add readme and cksum files into readme directory
+256e7b2 Update version in prepcheck script , add units for actual total time and TD/Hour for actual throughput
+05a499d upload the initial version of scripts
+663a2a2 Initial commit
 
-git pull
-這會把 GitHub 上的最新版本同步到你本地的資料夾。
-
-
-Perfect! Since your repo upgtools4gcc is public, your colleagues can already view and clone it — but to update, test, and maintain the scripts directly, they’ll need to either:
-
-🛠️ Option 1: You Add Them as Collaborators (Recommended for Team Projects)
-This gives them direct write access to the repo.
-
-✅ What they need to do:
-Accept your GitHub invitation (after you add them as collaborators)
-
-Clone the repo:
-
-git clone https://github.com/lh185009/upgtools4gcc.git
-cd upgtools4gcc
-Make changes, test scripts locally
-
-Commit and push:
-
-git add .
-git commit -m "修正 install.sh 的參數處理"
-git push
-🎉 Their changes will go directly into the repo!
-
+$ git diff 256e7b2 05a499d -- function4MHMchk
+$ git show 05a499d:./function4MHMchk > ./scripts/function4MHMchk-old
+$ diff -w ./scripts/function4MHMchk ./scripts/function4MHMchk-old

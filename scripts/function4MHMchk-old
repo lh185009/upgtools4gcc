@@ -6,7 +6,7 @@ clear
 while true
 do
     echo
-    read -rp "Input the CR number which the config_estimator output was collected(i.e. CHG0239666): " NO4CR
+    read -rp "Input the CR number which the config_estimator output was collect(i.e. CHG0239574): " NO4CR
     
     if [ ! -z "$NO4CR" ]
     then
@@ -20,23 +20,9 @@ done
 while true
 do
     echo
-    read -rp "Input SiteId which the config_estimator output was collected(i.e. TDTSA01): " SITEID4CR
-    
-    if [ ! -z "$SITEID4CR" ]
-    then
-        break
-    else
-        echo "SiteID can not be blank. Please input the SiteID again ..."
-		echo ""
-     fi
-done
-
-while true
-do
-    echo
     read -rp "Input the actual total hours for MHM data redistribution(i.e. 15.5): " TIME4CR
     
-    if [ ! -z "$TIME4CR" ] && (( $(echo "$TIME4CR > 0" | bc -l) ))
+    if [ ! -z "$TIME4CR" ] && [ "$TIME4CR" -gt 0 ]
     then
         break
     else
@@ -76,15 +62,15 @@ do
   
   case "$choice" in
   1)
-    Platform_Type="IFX_2.5" 
+    Platform_Type="IFX 2.5" 
     break
     ;;
   2)
-    Platform_Type="IFX_2.1.1" 
+    Platform_Type="IFX 2.1.1" 
     break
     ;;
   3)
-    Platform_Type="IFX_2.1" 
+    Platform_Type="IFX 2.1" 
     break
     ;;
   4)
@@ -92,15 +78,15 @@ do
     break
     ;;
   5)
-    Platform_Type="Amazon_Cloud"
+    Platform_Type="Amazon Cloud"
     break
     ;;
   6)
-    Platform_Type="Azure_Cloud"
+    Platform_Type="Azure Cloud"
     break
     ;;
   7)
-    Platform_Type="Google_Cloud"
+    Platform_Type="Google Cloud"
     break
     ;;  
   *) 
@@ -157,39 +143,26 @@ FNAME4EST=${NO4CR}_$(date +%m%d%H%M).out
 >$FNAME4EST
 echo;echo;echo "The followings are the required inputs for the spreadsheet of time estimation..."
 echo "(Version of script 20251211)" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "CR#                   :  " "$NO4CR" "" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "Siteid                :  " "$SITEID4CR" "" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "DB_ver                :  " "$(grep Release rec-est-op-org|grep Version | head -1 | awk '{print  $4}')" "" | tee -a $FNAME4EST 
-printf "%-25s %-10s %-10s\n" "Act_Total             :  " "$TIME4CR" "Hours" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "Avg_Throughput_Uncomp :  " "$(echo "scale=2; $Uncompressed_Size / $TIME4CR"|bc)" "TB/Hour" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "Avg_throughput_comp   :  " "$(echo "scale=2; $DB_Size / $TIME4CR"|bc)" "TB/Hour" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "Platform_type         :  " "$Platform_Type" "" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "Node#_cur             :  " "$(grep "current configuration has" rec-est-op-org|awk '{print $5}')" "Nodes" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "AMP#_cur              :  " "$(grep "current configuration has" rec-est-op-org|awk '{print $8}')" "AMPs" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "Node#_new             :  " "$(grep "new configuration will be" rec-est-op-org|awk '{print $6}')" "Nodes" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "AMP#_new              :  " "$(grep "new configuration will be" rec-est-op-org|awk '{print $9}')" "AMPs" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "Est_redisct           :  " "$Est_redisct" "Hours" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "Est_del               :  " "$Est_del" "Hours" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "Est_Total             :  " "$(echo "$Est_redisct + $Est_del"|bc)" "Hours" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "Uncompressed_Size     :  " "$Uncompressed_Size" "TB" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "DB_Size               :  " "$DB_Size" "TB" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "Compression_Ratio     :  " "$(echo "scale=2; $Uncompressed_Size / $DB_Size"|bc)" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "Empty_tbl#            :  " "$empty" "" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "TB_tbl#               :  " "$TB" "" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "GB_tbl#               :  " "$GB" "" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "MB_tbl#               :  " "$small_effective" "" | tee -a $FNAME4EST
-printf "%-25s %-10s %-10s\n" "Total_tbls            :  " "$(awk '/The system has:/ {print $4}' rec-est-op-org)" "" | tee -a $FNAME4EST
+printf "%-25s %-10s %-10s\n" "CR#                 :  " "$NO4CR" "" | tee -a $FNAME4EST
+printf "%-25s %-10s %-10s\n" "Act_Total           :  " "$TIME4CR" "" | tee -a $FNAME4EST 
+printf "%-25s %-10s %-10s\n" "Avg_throughput      :  " "$(echo "scale=2; $Uncompressed_Size / $TIME4CR"|bc)" "" | tee -a $FNAME4EST
+printf "%-25s %-10s %-10s\n" "Platform_type       :  " "$Platform_Type" "" | tee -a $FNAME4EST
+printf "%-25s %-10s %-10s\n" "Node#_cur           :  " "$(grep "current configuration has" rec-est-op-org|awk '{print $5}')" "Nodes" | tee -a $FNAME4EST
+printf "%-25s %-10s %-10s\n" "AMP#_cur            :  " "$(grep "current configuration has" rec-est-op-org|awk '{print $8}')" "AMPs" | tee -a $FNAME4EST
+printf "%-25s %-10s %-10s\n" "Node#_new           :  " "$(grep "new configuration will be" rec-est-op-org|awk '{print $6}')" "Nodes" | tee -a $FNAME4EST
+printf "%-25s %-10s %-10s\n" "AMP#_new            :  " "$(grep "new configuration will be" rec-est-op-org|awk '{print $9}')" "AMPs" | tee -a $FNAME4EST
+printf "%-25s %-10s %-10s\n" "Est_redisct         :  " "$Est_redisct" "Hours" | tee -a $FNAME4EST
+printf "%-25s %-10s %-10s\n" "Est_del             :  " "$Est_del" "Hours" | tee -a $FNAME4EST
+printf "%-25s %-10s %-10s\n" "Est_Total           :  " "$(echo "$Est_redisct + $Est_del"|bc)" "Hours" | tee -a $FNAME4EST
+printf "%-25s %-10s %-10s\n" "Uncompressed_Size   :  " "$Uncompressed_Size" "TB" | tee -a $FNAME4EST
+printf "%-25s %-10s %-10s\n" "DB_Size             :  " "$DB_Size" "TB" | tee -a $FNAME4EST
+printf "%-25s %-10s %-10s\n" "Compression_Ratio   :  " "$(echo "scale=2; $Uncompressed_Size / $DB_Size"|bc)" | tee -a $FNAME4EST
+printf "%-25s %-10s %-10s\n" "Empty_tbl#          :  " "$empty" "" | tee -a $FNAME4EST
+printf "%-25s %-10s %-10s\n" "TB_tbl#             :  " "$TB" "" | tee -a $FNAME4EST
+printf "%-25s %-10s %-10s\n" "GB_tbl#             :  " "$GB" "" | tee -a $FNAME4EST
+printf "%-25s %-10s %-10s\n" "MB_tbl#             :  " "$small_effective" "" | tee -a $FNAME4EST
+printf "%-25s %-10s %-10s\n" "Total_tbls          :  " "$(awk '/The system has:/ {print $4}' rec-est-op-org)" "" | tee -a $FNAME4EST
 
-# Skip the first line, extract the 3rd field, and write to one line
-awk 'NR==1 { next } { 
-  if ($1 ~ /Platform_type/) {
-    $3 = "\"" $3 "\""
-    print $1,"     ", $2,"   ", $3
-  } else {
-    print
-  }
-}' $FNAME4EST >tempf1.out
-awk 'NR>=1 { print $3 }' tempf1.out | paste -sd ' ' - > ${NO4CR}_data4excel.out
-rm rec-est-op-org uncompressed_size4tbl.out 1.out tempf1.out
+rm rec-est-op-org uncompressed_size4tbl.out 1.out
 echo;echo "Note:"
-read -p "Collect and send the files \"$FNAME4EST\"&&\"${NO4CR}_data4excel.out\" to James&Lambert.Press any key to exit..."
+read -p "Kindly be reminded to collect and send the output file \"$FNAME4EST\" with James and Lambert.Press any key to exit..."
