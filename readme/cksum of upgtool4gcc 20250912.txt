@@ -1,0 +1,45 @@
+#
+# for i in `ls|sort -f`;do ls -l $i;done
+-rwxr----- 1 root root 20058 Sep 11 02:50 function4BARtuning
+-rwxr----- 1 root root 8458 Sep 11 02:50 function4CHKrelocation
+-rwxr----- 1 root root 15527 Sep 11 02:50 function4CHonTD
+-rwxr----- 1 root root 24902 Sep 11 02:50 function4configTD
+-rwxr----- 1 root root 46362 Sep 11 02:50 function4CSonTD
+-rwxr----- 1 root root 7917 Sep 11 02:50 function4DSAinputs
+-rwxr----- 1 root root 32005 Sep 11 02:50 function4DSAinstall
+-rwxr----- 1 root root 46096 Sep 11 02:50 function4DSAosmove
+-rwxr----- 1 root root 55933 Sep 11 02:50 function4DSAupgrade
+-rwxr----- 1 root root 10733 Sep 11 02:50 function4MHMmon
+-rwxr----- 1 root root 13662 Sep 11 02:50 function4MSosmove
+-rwxr----- 1 root root 15212 Sep 11 02:50 function4MSupgrade
+-rwxr----- 1 root root 93363 Sep 11 02:50 function4prepcheck
+-rwxr----- 1 root root 97959 Sep 11 02:50 function4SCAtools
+-rwxr----- 1 root root 29298 Sep 11 02:50 function4UDMosmove
+-rwxr----- 1 root root 33447 Sep 11 02:50 function4UDMupgrade
+-rwxr----- 1 root root 9982 Sep 11 02:50 upgtool4gcc
+# 
+# for i in `ls|sort -f`;do cksum $i;done
+601645742 20058 function4BARtuning
+1255767343 8458 function4CHKrelocation
+3559796256 15527 function4CHonTD
+2981618091 24902 function4configTD
+3857126694 46362 function4CSonTD
+1465702029 7917 function4DSAinputs
+3200425234 32005 function4DSAinstall
+3490938343 46096 function4DSAosmove
+2644063740 55933 function4DSAupgrade
+2985031688 10733 function4MHMmon
+3234588387 13662 function4MSosmove
+1846587893 15212 function4MSupgrade
+2973833617 93363 function4prepcheck
+375184058 97959 function4SCAtools
+4106747400 29298 function4UDMosmove
+826398705 33447 function4UDMupgrade
+1828132838 9982 upgtool4gcc
+#
+# ls -l upgtool4gcc_bundle-20250912.tgz 
+-rw-r----- 1 root root 111371 Sep 11 02:53 upgtool4gcc_bundle-20250912.tgz
+#
+# cksum upgtool4gcc_bundle-20250912.tgz 
+255939352 111371 upgtool4gcc_bundle-20250912.tgz
+#
