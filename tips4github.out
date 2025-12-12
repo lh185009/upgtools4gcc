@@ -1,8 +1,31 @@
 
 https://github.com/lh185009/upgtools4gcc
 
+### 
+-Create a GitHub Account
+ Go to https://github.com
+ Click Sign up
+-Install Git
+ Download Git from https://git-scm.com 
+ Install it with default settings
+
+Use Git Bash with bc via MSYS2
+Install MSYS2 (a more complete Unix-like environment for Windows): https://www.msys2.org
+Run this to install bc in MSYS2 MSYS terminal:
+$ pacman -S bc
+Command bc can be used in the MSYS2 terminal!
+Add C:\msys64\usr\bin  into PATH in Windows
+"System" -> "Advanced system settings" tab -> "Environment Variables..." -> "Path" -> "New" + "C:\msys64\usr\bin"
+
+In Git bash
+TD+lh185009@TD-5XYBD24 MINGW64 ~/Documents/upgtools4gcc (main)
+$ type bc
+bc is /c/msys64/usr/bin/bc
+
 1.Change the local directory and make this directory for Git Hub.
 $ cd "/c/Users/lh185009/Documents/upgtools4gcc"
+$ git config --global user.name "Your Name"
+$ git config --global user.email "your@email.com"
 $ git init     (initialize this directory for Git Hub)    
 $ git remote add origin https://github.com/lh185009/upgtools4gcc.git    (let Git know which GitHub repository to be used)
 
@@ -10,6 +33,7 @@ $ git remote add origin https://github.com/lh185009/upgtools4gcc.git    (let Git
 2.How to push the new versions of scripts to GitHub ?
 $ git add .
 $ git commit -m "explain the updates and changes in the new version"
+$ git branch -M main
 $ git push  (adm "-u" in the first time)
 
 if 「Add a README」 was selected in the creation of repository or any other time.
