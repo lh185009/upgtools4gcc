@@ -31,6 +31,7 @@ $ git remote add origin https://github.com/lh185009/upgtools4gcc.git    (let Git
 
 
 2.How to push the new versions of scripts to GitHub ?
+$ cd "/c/Users/lh185009/Documents/upgtools4gcc"
 $ git add .
 $ git commit -m "explain the updates and changes in the new version"
 $ git branch -M main
